@@ -55,17 +55,22 @@ fi
 
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // ""')
 [ -z "$SESSION_ID" ] && exit 0
+[[ ! "$SESSION_ID" =~ ^[a-zA-Z0-9._-]+$ ]] && exit 0
 
 RESUME_DIR="$CWD/.claude/auto-resume"
 QUEUED_DIR="$RESUME_DIR/queued"
 RESUME_FILE="$QUEUED_DIR/${SESSION_ID}.json"
 
-# Already scheduled for this session → skip (if valid JSON)
+# Already scheduled for this session → lock source to stop_failure
 if [ -f "$RESUME_FILE" ]; then
     EXISTING_SID=$(jq -r '.session_id // empty' "$RESUME_FILE" 2>/dev/null || echo "")
     if [ -n "$EXISTING_SID" ]; then
+        jq '.source = "stop_failure"' "$RESUME_FILE" > "$RESUME_FILE.tmp" 2>/dev/null && mv "$RESUME_FILE.tmp" "$RESUME_FILE"
         EXISTING_TIME=$(jq -r '.resume_at_human // "unknown"' "$RESUME_FILE" 2>/dev/null || echo "unknown")
-        echo "⏳ Auto-resume already scheduled at $EXISTING_TIME" >&2
+        EXISTING_AT=$(jq -r '.resume_at // 0' "$RESUME_FILE" 2>/dev/null || echo "0")
+        EXISTING_INT=$(printf '%.0f' "$EXISTING_AT" 2>/dev/null || echo 0)
+        DELTA=$((EXISTING_INT - NOW)); MINS=$((DELTA / 60)); SECS=$((DELTA % 60))
+        echo -e "⏳ Auto-resume already scheduled at $EXISTING_TIME (in ${MINS}m ${SECS}s) [locked by stop_failure]\n   State: $RESUME_FILE\n   Cancel: rm $RESUME_FILE" >&2
         exit 0
     fi
     # File corrupted — fall through to create
@@ -85,6 +90,7 @@ fi
 
 # 6. Create schedule
 RESUME_DATE=$(date -d "@$RESUME_AT" -Iseconds 2>/dev/null || date -r "$RESUME_AT" -Iseconds 2>/dev/null || echo "$RESUME_AT")
+CURRENT_RATE=$(echo "$FIVE_PCT $SEVEN_PCT" | awk '{print ($1 > $2) ? $1 : $2}')
 
 mkdir -p "$QUEUED_DIR"
 jq -n \
@@ -93,7 +99,9 @@ jq -n \
     --arg rah "$RESUME_DATE" \
     --argjson sat "$NOW" \
     --arg p "If any agents failed in the previous task, do not perform their work directly — re-launch the same agents. If it was not an agent failure, continue with the remaining work." \
-    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, prompt: $p}' \
+    --argjson car "$CURRENT_RATE" \
+    --arg src "stop_failure" \
+    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, prompt: $p, created_at_rate: $car, source: $src}' \
     > "$RESUME_FILE.tmp" && mv "$RESUME_FILE.tmp" "$RESUME_FILE"
 
 # 7. Spawn resume process
@@ -105,7 +113,7 @@ nohup bash "$HOME/.claude/bin/claude-auto-resume.sh" "$SESSION_ID" "$RESUME_AT" 
 echo "$(date -Iseconds) SCHEDULED_BY_FAILURE session=$SESSION_ID resume_at=$RESUME_DATE five=${FIVE_PCT}% seven=${SEVEN_PCT}% cwd=$CWD" \
     >> "$HOME/.claude/logs/auto-resume-$(date +%Y-%m-%d).log"
 
-echo "⏳ API error + rate limit 100%. Auto-resume scheduled at $RESUME_DATE" >&2
-echo "   Cancel: rm $RESUME_FILE" >&2
+DELTA=$((RESUME_AT - NOW)); MINS=$((DELTA / 60)); SECS=$((DELTA % 60))
+echo -e "⏳ Auto-resume scheduled at $RESUME_DATE (in ${MINS}m ${SECS}s) [locked by stop_failure]\n   State: $RESUME_FILE\n   Cancel: rm $RESUME_FILE" >&2
 
 exit 0

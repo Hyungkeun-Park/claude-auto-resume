@@ -54,6 +54,7 @@ fi
 
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // ""')
 [ -z "$SESSION_ID" ] && exit 0
+[[ ! "$SESSION_ID" =~ ^[a-zA-Z0-9._-]+$ ]] && exit 0
 
 RESUME_DIR="$CWD/.claude/auto-resume"
 QUEUED_DIR="$RESUME_DIR/queued"
@@ -64,7 +65,10 @@ if [ -f "$RESUME_FILE" ]; then
     EXISTING_SID=$(jq -r '.session_id // empty' "$RESUME_FILE" 2>/dev/null || echo "")
     if [ -n "$EXISTING_SID" ]; then
         EXISTING_TIME=$(jq -r '.resume_at_human // "unknown"' "$RESUME_FILE" 2>/dev/null || echo "unknown")
-        echo "⏳ Auto-resume already scheduled at $EXISTING_TIME" >&2
+        EXISTING_AT=$(jq -r '.resume_at // 0' "$RESUME_FILE" 2>/dev/null || echo "0")
+        EXISTING_INT=$(printf '%.0f' "$EXISTING_AT" 2>/dev/null || echo 0)
+        DELTA=$((EXISTING_INT - NOW)); MINS=$((DELTA / 60)); SECS=$((DELTA % 60))
+        echo -e "⏳ Auto-resume already scheduled at $EXISTING_TIME (in ${MINS}m ${SECS}s)\n   State: $RESUME_FILE\n   Cancel: rm $RESUME_FILE" >&2
         exit 0
     fi
     # File exists but corrupted/empty — will overwrite below
@@ -86,6 +90,8 @@ fi
 RESUME_DATE=$(date -d "@$RESUME_AT" -Iseconds 2>/dev/null || date -r "$RESUME_AT" -Iseconds 2>/dev/null || echo "$RESUME_AT")
 PROMPT=$(echo "$INPUT" | jq -r '.prompt // "If any agents failed in the previous task, do not perform their work directly — re-launch the same agents. If it was not an agent failure, continue with the remaining work."')
 
+CURRENT_RATE=$(echo "$FIVE_PCT $SEVEN_PCT" | awk '{print ($1 > $2) ? $1 : $2}')
+
 mkdir -p "$QUEUED_DIR"
 jq -n \
     --arg sid "$SESSION_ID" \
@@ -93,7 +99,9 @@ jq -n \
     --arg rah "$RESUME_DATE" \
     --argjson sat "$NOW" \
     --arg p "$PROMPT" \
-    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, prompt: $p}' \
+    --argjson car "$CURRENT_RATE" \
+    --arg src "user_prompt" \
+    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, prompt: $p, created_at_rate: $car, source: $src}' \
     > "$RESUME_FILE.tmp" && mv "$RESUME_FILE.tmp" "$RESUME_FILE"
 
 # 7. Spawn resume process in background
@@ -105,7 +113,7 @@ nohup bash "$HOME/.claude/bin/claude-auto-resume.sh" "$SESSION_ID" "$RESUME_AT" 
 echo "$(date -Iseconds) SCHEDULED_BY_GUARD session=$SESSION_ID resume_at=$RESUME_DATE five=${FIVE_PCT}% seven=${SEVEN_PCT}% cwd=$CWD" \
     >> "$HOME/.claude/logs/auto-resume-$(date +%Y-%m-%d).log"
 
-echo "⏳ Rate limit 100%. Auto-resume scheduled at $RESUME_DATE" >&2
-echo "   Cancel: rm $RESUME_FILE" >&2
+DELTA=$((RESUME_AT - NOW)); MINS=$((DELTA / 60)); SECS=$((DELTA % 60))
+echo -e "⏳ Auto-resume scheduled at $RESUME_DATE (in ${MINS}m ${SECS}s)\n   State: $RESUME_FILE\n   Cancel: rm $RESUME_FILE" >&2
 
 exit 0

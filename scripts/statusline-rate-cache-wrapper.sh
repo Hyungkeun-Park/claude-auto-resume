@@ -17,7 +17,13 @@ if command -v jq >/dev/null 2>&1; then
 
     if [ -n "$five_pct" ] || [ -n "$week_pct" ]; then
         now=$(date +%s)
-        cache_json="{\"rate_limits\":{\"five_hour\":{\"used_percentage\":${five_pct:-0},\"resets_at\":${five_reset:-0}},\"seven_day\":{\"used_percentage\":${week_pct:-0},\"resets_at\":${week_reset:-0}}},\"last_updated\":${now}}"
+        cache_json=$(jq -n \
+            --argjson fp "${five_pct:-0}" \
+            --argjson fr "${five_reset:-0}" \
+            --argjson wp "${week_pct:-0}" \
+            --argjson wr "${week_reset:-0}" \
+            --argjson now "$now" \
+            '{rate_limits: {five_hour: {used_percentage: $fp, resets_at: $fr}, seven_day: {used_percentage: $wp, resets_at: $wr}}, last_updated: $now}')
         echo "$cache_json" > "$HOME/.claude/rate-limits.json.tmp" && mv "$HOME/.claude/rate-limits.json.tmp" "$HOME/.claude/rate-limits.json"
     fi
 fi

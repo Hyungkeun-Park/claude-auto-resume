@@ -23,6 +23,7 @@ Cancel all pending:
 
 How it works:
   Rate limit 100% → hook creates schedule → daemon waits → rate recovers → session resumes
+  Overuse detection: if a turn completes at 100%, schedule is auto-cancelled (overuse mode)
 
 State files:
   <project>/.claude/auto-resume/queued/    — pending schedules
