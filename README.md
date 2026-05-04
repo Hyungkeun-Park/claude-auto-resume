@@ -253,7 +253,7 @@ All messages include the state file path and cancel command.
 bash ~/.claude/bin/test-rate-limit-simulation.sh
 ```
 
-72 test cases, 237 assertions covering:
+96 test cases, 313 assertions covering:
 
 | Category | Tests | Coverage |
 |----------|-------|----------|
@@ -269,6 +269,9 @@ bash ~/.claude/bin/test-rate-limit-simulation.sh
 | **Overuse detection** | **T44-T56** | **Overuse via UPS/Stop, SubagentStop exempt, StopFailure lock, field validation, invalid session ID** |
 | **Subagent marker (G16)** | **T57-T66** | **Marker create/delete, overuse skip, stale cache cleanup, full G16 lifecycle, validation** |
 | **Stale cache + rate gate (G17)** | **T67-T72** | **Stale at low rate skips, stale at 100% schedules, overuse→block transition, prompt preservation** |
+| Hook input robustness | T73-T82 | Extra/missing/null fields, cache schema changes, rapid fires, unknown events |
+| Error recovery | T83-T92 | Empty/non-JSON cache, zero/past reset, long prompt, CWD isolation, rate boundary |
+| Hook registration | T93-T96 | Script existence, shebang, settings.json wiring, safety guards |
 
 ## Comparison with Existing Tools
 
@@ -301,7 +304,7 @@ bash ~/.claude/bin/test-rate-limit-simulation.sh
 - **G17 fix — stale cache blocks scheduling at 100%**: Freshness check was unconditionally exiting on stale cache (>5min), even when cached rate was ≥100%. Since rate only resets downward, stale cache at ≥100% is valid for scheduling. Combined freshness+rate gate: exit only when stale AND rate < 100%
 - **All three hooks fixed**: `rate-limit-prompt-guard.sh`, `rate-limit-stop.sh`, `rate-limit-stop-failure.sh` — rate data now read before freshness gate
 - **Overuse→block transition**: When overuse turns off and client blocks, statusline stops updating but schedule is now correctly created from stale cache at ≥100%
-- **Test suite**: 66 → 72 tests, 214 → 237 assertions (T05/T11/T17 updated, 6 new stale cache+rate gate tests T67-T72)
+- **Test suite**: 66 → 96 tests, 214 → 313 assertions (T05/T11/T17 updated, T67-T72 stale cache gate, T73-T82 input robustness, T83-T92 error recovery, T93-T96 hook registration compatibility)
 
 ### v1.2.0
 

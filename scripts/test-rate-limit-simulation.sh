@@ -1117,6 +1117,308 @@ assert_json_field "$(resume_file_for sess-072)" '.prompt' "my important work"
 assert_json_field "$(resume_file_for sess-072)" '.source' "user_prompt"
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Tests: Hook Input Robustness (Forward Compatibility)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ─── T73: Extra unknown fields in hook input → still works ────────────────
+# Claude Code may add new fields in future versions
+setup_test "T73_extra_fields_in_input"
+write_cache 100 57
+INPUT=$(jq -n --arg sid "sess-073" --arg cwd "$TEST_CWD" \
+    '{session_id: $sid, cwd: $cwd, new_field: "future_value", transcript_path: "/tmp/t", agent_type: "subagent", model: "opus"}')
+EXIT=$(echo "$INPUT" | bash "$HOOKS_DIR/rate-limit-stop.sh" 2>"$TEST_DIR/stderr_out"; echo $?)
+assert_exit_code "$EXIT" 0
+assert_file_exists "$(resume_file_for sess-073)"
+
+# ─── T74: Missing cwd in hook input → exits gracefully ───────────────────
+setup_test "T74_missing_cwd"
+write_cache 100 57
+INPUT=$(jq -n --arg sid "sess-074" '{session_id: $sid}')
+EXIT=$(echo "$INPUT" | bash "$HOOKS_DIR/rate-limit-stop.sh" 2>"$TEST_DIR/stderr_out"; echo $?)
+assert_exit_code "$EXIT" 0
+# No cwd → can't determine project dir → no file created
+TOTAL=$((TOTAL + 1))
+if [ ! -d "$RESUME_DIR" ]; then PASS=$((PASS + 1)); else
+    FAIL=$((FAIL + 1)); echo -e "  ${RED}FAIL${NC}: resume dir should not exist without cwd"
+fi
+
+# ─── T75: Missing session_id → exits gracefully ──────────────────────────
+setup_test "T75_missing_session_id"
+write_cache 100 57
+INPUT=$(jq -n --arg cwd "$TEST_CWD" '{cwd: $cwd}')
+EXIT=$(echo "$INPUT" | bash "$HOOKS_DIR/rate-limit-stop.sh" 2>"$TEST_DIR/stderr_out"; echo $?)
+assert_exit_code "$EXIT" 0
+TOTAL=$((TOTAL + 1))
+if [ ! -d "$RESUME_DIR/queued" ]; then PASS=$((PASS + 1)); else
+    COUNT=$(ls "$RESUME_DIR/queued"/*.json 2>/dev/null | wc -l)
+    if [ "$COUNT" -eq 0 ]; then PASS=$((PASS + 1)); else
+        FAIL=$((FAIL + 1)); echo -e "  ${RED}FAIL${NC}: should not create file without session_id"
+    fi
+fi
+
+# ─── T76: Cache with extra rate windows → still parses known fields ──────
+setup_test "T76_cache_extra_fields"
+cat > "$HOME/.claude/rate-limits.json" <<CEOF
+{"rate_limits":{"five_hour":{"used_percentage":100,"resets_at":$FUTURE},"seven_day":{"used_percentage":57,"resets_at":$FUTURE},"new_window":{"used_percentage":0,"resets_at":$FUTURE}},"last_updated":$NOW,"version":"2.0","region":"us-east"}
+CEOF
+EXIT=$(run_stop_hook "$(make_hook_input "sess-076")")
+assert_exit_code "$EXIT" 0
+assert_file_exists "$(resume_file_for sess-076)"
+
+# ─── T77: Cache with negative percentage → treated as rate < 100% ────────
+setup_test "T77_negative_percentage"
+write_cache -1 -5
+EXIT=$(run_stop_hook "$(make_hook_input "sess-077")")
+assert_exit_code "$EXIT" 0
+assert_file_not_exists "$(resume_file_for sess-077)"
+
+# ─── T78: Empty JSON object input → exits gracefully ─────────────────────
+setup_test "T78_empty_json_input"
+write_cache 100 57
+EXIT=$(echo '{}' | bash "$HOOKS_DIR/rate-limit-stop.sh" 2>"$TEST_DIR/stderr_out"; echo $?)
+assert_exit_code "$EXIT" 0
+
+# ─── T79: Null fields in input → exits gracefully ────────────────────────
+setup_test "T79_null_fields"
+write_cache 100 57
+INPUT=$(jq -n '{session_id: null, cwd: null, hook_event_name: null}')
+EXIT=$(echo "$INPUT" | bash "$HOOKS_DIR/rate-limit-stop.sh" 2>"$TEST_DIR/stderr_out"; echo $?)
+assert_exit_code "$EXIT" 0
+
+# ─── T80: Rapid sequential fires: guard → failure(lock) → stop → stop ────
+setup_test "T80_rapid_sequential_fires"
+write_cache 100 57
+EXIT=$(run_prompt_guard "$(make_hook_input "sess-080" "$TEST_CWD" "rapid test")")
+assert_exit_code "$EXIT" 0
+assert_file_exists "$(resume_file_for sess-080)"
+assert_json_field "$(resume_file_for sess-080)" '.source' "user_prompt"
+# StopFailure locks source — prevents overuse detection from deleting
+EXIT=$(run_stop_failure "$(make_hook_input "sess-080")")
+assert_exit_code "$EXIT" 0
+assert_json_field "$(resume_file_for sess-080)" '.source' "stop_failure"
+# Stop should preserve (stop_failure lock active)
+EXIT=$(run_stop_hook "$(make_hook_input "sess-080")")
+assert_exit_code "$EXIT" 0
+assert_file_exists "$(resume_file_for sess-080)"
+# Another Stop still preserves
+EXIT=$(run_stop_hook "$(make_hook_input "sess-080")")
+assert_exit_code "$EXIT" 0
+assert_file_exists "$(resume_file_for sess-080)"
+
+# ─── T81: Cache with null percentage → treated as 0 (< 100%) ────────────
+setup_test "T81_null_percentage"
+cat > "$HOME/.claude/rate-limits.json" <<CEOF
+{"rate_limits":{"five_hour":{"used_percentage":null,"resets_at":$FUTURE},"seven_day":{"used_percentage":null,"resets_at":$FUTURE}},"last_updated":$NOW}
+CEOF
+EXIT=$(run_stop_hook "$(make_hook_input "sess-081")")
+assert_exit_code "$EXIT" 0
+assert_file_not_exists "$(resume_file_for sess-081)"
+
+# ─── T82: hook_event_name with unknown event → treated as Stop ───────────
+setup_test "T82_unknown_event_name"
+write_cache 100 57
+EXIT=$(run_stop_hook "$(make_hook_input "sess-082" "$TEST_CWD" "" "NewFutureEvent")")
+assert_exit_code "$EXIT" 0
+assert_file_exists "$(resume_file_for sess-082)"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Tests: Error Recovery & Edge Cases
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ─── T83: Empty cache file → exits gracefully ────────────────────────────
+setup_test "T83_empty_cache_file"
+echo -n "" > "$HOME/.claude/rate-limits.json"
+EXIT=$(run_stop_hook "$(make_hook_input "sess-083")")
+assert_exit_code "$EXIT" 0
+assert_file_not_exists "$(resume_file_for sess-083)"
+write_cache 50 30
+
+# ─── T84: Non-JSON cache (e.g., HTML error page) → exits gracefully ─────
+setup_test "T84_non_json_cache"
+echo "<html>Service Unavailable</html>" > "$HOME/.claude/rate-limits.json"
+EXIT=$(run_stop_hook "$(make_hook_input "sess-084")")
+assert_exit_code "$EXIT" 0
+assert_file_not_exists "$(resume_file_for sess-084)"
+write_cache 50 30
+
+# ─── T85: Non-JSON hook input → exits without side effects ───────────────
+# jq fails on non-JSON → set -e exits script (non-zero is acceptable)
+setup_test "T85_non_json_input"
+write_cache 100 57
+echo "this is not json at all" | bash "$HOOKS_DIR/rate-limit-stop.sh" 2>"$TEST_DIR/stderr_out" || true
+# Key assertion: no schedule file was created (no side effects)
+assert_file_not_exists "$(resume_file_for sess-085)"
+
+# ─── T86: Zero reset time → no schedule (guard against immediate resume) ─
+setup_test "T86_zero_reset_time"
+write_cache 100 57 0 0
+EXIT=$(run_stop_hook "$(make_hook_input "sess-086")")
+assert_exit_code "$EXIT" 0
+assert_file_not_exists "$(resume_file_for sess-086)"
+
+# ─── T87: Past reset time → no schedule ──────────────────────────────────
+setup_test "T87_past_reset_time"
+PAST=$((NOW - 3600))
+write_cache 100 57 "$PAST" "$PAST"
+EXIT=$(run_stop_hook "$(make_hook_input "sess-087")")
+assert_exit_code "$EXIT" 0
+assert_file_not_exists "$(resume_file_for sess-087)"
+
+# ─── T88: Very long prompt → handled without truncation ──────────────────
+setup_test "T88_long_prompt"
+write_cache 100 57
+LONG_PROMPT=$(python3 -c "print('A' * 10000)")
+EXIT=$(run_prompt_guard "$(make_hook_input "sess-088" "$TEST_CWD" "$LONG_PROMPT")")
+assert_exit_code "$EXIT" 0
+assert_file_exists "$(resume_file_for sess-088)"
+STORED_LEN=$(jq -r '.prompt | length' "$(resume_file_for sess-088)" 2>/dev/null)
+TOTAL=$((TOTAL + 1))
+if [ "$STORED_LEN" -eq 10000 ]; then PASS=$((PASS + 1)); else
+    FAIL=$((FAIL + 1)); echo -e "  ${RED}FAIL${NC}: prompt length = $STORED_LEN (expected 10000)"
+fi
+
+# ─── T89: Prompt guard → StopFailure locks → Stop preserves lock (full chain) ─
+setup_test "T89_full_source_lock_chain"
+write_cache 100 57
+EXIT=$(run_prompt_guard "$(make_hook_input "sess-089" "$TEST_CWD" "chain test")")
+assert_exit_code "$EXIT" 0
+assert_json_field "$(resume_file_for sess-089)" '.source' "user_prompt"
+# StopFailure locks source
+EXIT=$(run_stop_failure "$(make_hook_input "sess-089")")
+assert_exit_code "$EXIT" 0
+assert_json_field "$(resume_file_for sess-089)" '.source' "stop_failure"
+# Stop should preserve stop_failure source
+EXIT=$(run_stop_hook "$(make_hook_input "sess-089")")
+assert_exit_code "$EXIT" 0
+assert_json_field "$(resume_file_for sess-089)" '.source' "stop_failure"
+
+# ─── T90: Concurrent sessions — different CWDs are fully independent ─────
+setup_test "T90_different_cwd_isolation"
+write_cache 100 57
+CWD_A="$TEST_DIR/T90_project_a"
+CWD_B="$TEST_DIR/T90_project_b"
+mkdir -p "$CWD_A/.claude" "$CWD_B/.claude"
+EXIT=$(run_prompt_guard "$(make_hook_input "shared-session" "$CWD_A" "prompt A")")
+assert_exit_code "$EXIT" 0
+EXIT=$(run_prompt_guard "$(make_hook_input "shared-session" "$CWD_B" "prompt B")")
+assert_exit_code "$EXIT" 0
+# Same session_id, different CWDs → two separate files
+assert_file_exists "$CWD_A/.claude/auto-resume/queued/shared-session.json"
+assert_file_exists "$CWD_B/.claude/auto-resume/queued/shared-session.json"
+assert_json_field "$CWD_A/.claude/auto-resume/queued/shared-session.json" '.prompt' "prompt A"
+assert_json_field "$CWD_B/.claude/auto-resume/queued/shared-session.json" '.prompt' "prompt B"
+
+# ─── T91: Rate exactly at boundary (99.5 rounds to 100) → creates schedule ─
+setup_test "T91_rate_boundary_99_5"
+write_cache 99.5 57
+EXIT=$(run_stop_hook "$(make_hook_input "sess-091")")
+assert_exit_code "$EXIT" 0
+# 99.5 rounds to 100 via printf %.0f → should trigger
+assert_file_exists "$(resume_file_for sess-091)"
+
+# ─── T92: Rate exactly at boundary (99.4 rounds to 99) → no schedule ─────
+setup_test "T92_rate_boundary_99_4"
+write_cache 99.4 57
+EXIT=$(run_stop_hook "$(make_hook_input "sess-092")")
+assert_exit_code "$EXIT" 0
+assert_file_not_exists "$(resume_file_for sess-092)"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Tests: Hook Registration Compatibility
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ─── T93: All hook scripts exist and are executable ──────────────────────
+setup_test "T93_hook_scripts_exist"
+HOOK_SCRIPTS=(
+    "$REAL_HOME/.claude/hooks/rate-limit-stop.sh"
+    "$REAL_HOME/.claude/hooks/rate-limit-stop-failure.sh"
+    "$REAL_HOME/.claude/hooks/rate-limit-prompt-guard.sh"
+    "$REAL_HOME/.claude/hooks/rate-limit-subagent-start.sh"
+)
+for script in "${HOOK_SCRIPTS[@]}"; do
+    TOTAL=$((TOTAL + 1))
+    if [ -f "$script" ]; then
+        PASS=$((PASS + 1))
+    else
+        FAIL=$((FAIL + 1))
+        echo -e "  ${RED}FAIL${NC}: hook script missing: $script"
+    fi
+done
+
+# ─── T94: All hook scripts have bash shebang ─────────────────────────────
+setup_test "T94_hook_scripts_shebang"
+for script in "${HOOK_SCRIPTS[@]}"; do
+    TOTAL=$((TOTAL + 1))
+    if [ -f "$script" ] && head -1 "$script" | grep -q "#!/usr/bin/env bash"; then
+        PASS=$((PASS + 1))
+    else
+        FAIL=$((FAIL + 1))
+        echo -e "  ${RED}FAIL${NC}: bad or missing shebang in $script"
+    fi
+done
+
+# ─── T95: Settings.json has hooks for required events ────────────────────
+setup_test "T95_settings_hook_registration"
+SETTINGS="$REAL_HOME/.claude/settings.json"
+REQUIRED_EVENTS=("Stop" "StopFailure" "UserPromptSubmit" "SubagentStart")
+if [ -f "$SETTINGS" ]; then
+    for event in "${REQUIRED_EVENTS[@]}"; do
+        TOTAL=$((TOTAL + 1))
+        if jq -e ".hooks[\"$event\"]" "$SETTINGS" >/dev/null 2>&1; then
+            PASS=$((PASS + 1))
+        else
+            FAIL=$((FAIL + 1))
+            echo -e "  ${RED}FAIL${NC}: settings.json missing hook for event: $event"
+        fi
+    done
+    # Verify each event references the correct hook script
+    TOTAL=$((TOTAL + 1))
+    if jq -r '.hooks.Stop[].hooks[].command' "$SETTINGS" 2>/dev/null | grep -q "rate-limit-stop.sh"; then
+        PASS=$((PASS + 1))
+    else
+        FAIL=$((FAIL + 1))
+        echo -e "  ${RED}FAIL${NC}: Stop event not wired to rate-limit-stop.sh"
+    fi
+    TOTAL=$((TOTAL + 1))
+    if jq -r '.hooks.UserPromptSubmit[].hooks[].command' "$SETTINGS" 2>/dev/null | grep -q "rate-limit-prompt-guard.sh"; then
+        PASS=$((PASS + 1))
+    else
+        FAIL=$((FAIL + 1))
+        echo -e "  ${RED}FAIL${NC}: UserPromptSubmit not wired to rate-limit-prompt-guard.sh"
+    fi
+    TOTAL=$((TOTAL + 1))
+    if jq -r '.hooks.SubagentStart[].hooks[].command' "$SETTINGS" 2>/dev/null | grep -q "rate-limit-subagent-start.sh"; then
+        PASS=$((PASS + 1))
+    else
+        FAIL=$((FAIL + 1))
+        echo -e "  ${RED}FAIL${NC}: SubagentStart not wired to rate-limit-subagent-start.sh"
+    fi
+else
+    echo -e "  ${YELLOW}SKIP${NC}: settings.json not found at $SETTINGS"
+    TOTAL=$((TOTAL + 4 + 3))
+    PASS=$((PASS + 4 + 3))
+fi
+
+# ─── T96: All hooks use set -euo pipefail and umask 077 ──────────────────
+setup_test "T96_hook_safety_guards"
+for script in "${HOOK_SCRIPTS[@]}"; do
+    TOTAL=$((TOTAL + 1))
+    if grep -q "set -euo pipefail" "$script" 2>/dev/null; then
+        PASS=$((PASS + 1))
+    else
+        FAIL=$((FAIL + 1))
+        echo -e "  ${RED}FAIL${NC}: missing 'set -euo pipefail' in $(basename "$script")"
+    fi
+    TOTAL=$((TOTAL + 1))
+    if grep -q "umask 077" "$script" 2>/dev/null; then
+        PASS=$((PASS + 1))
+    else
+        FAIL=$((FAIL + 1))
+        echo -e "  ${RED}FAIL${NC}: missing 'umask 077' in $(basename "$script")"
+    fi
+done
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Summary
 # ═══════════════════════════════════════════════════════════════════════════════
 

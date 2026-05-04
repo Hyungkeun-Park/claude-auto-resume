@@ -653,7 +653,7 @@ Overuse 감지 시:
 
 ## Test
 
-### Hook 시뮬레이션 테스트 (72개 시나리오, 237 assertions)
+### Hook 시뮬레이션 테스트 (96개 시나리오, 313 assertions)
 
 ```bash
 bash ~/.claude/bin/test-rate-limit-simulation.sh
@@ -673,6 +673,9 @@ bash ~/.claude/bin/test-rate-limit-simulation.sh
 | **Overuse detection** | **T44-T56** | **Overuse via UPS/Stop, SubagentStop exempt, StopFailure lock, field validation, invalid session ID** |
 | **Subagent marker (G16)** | **T57-T66** | **Marker create/delete, overuse skip with marker, stale cache cleanup, multi-agent partial, full G16 lifecycle, validation, opt-out, empty dir** |
 | **Stale cache + rate gate (G17)** | **T67-T72** | **Stale cache at low rate skips, stale cache at 100% creates schedule, overuse→block transition, no false cleanup, prompt preservation** |
+| **Hook input robustness** | **T73-T82** | **Extra/missing/null fields, cache schema changes, negative/null percentages, rapid fires, unknown events** |
+| **Error recovery** | **T83-T92** | **Empty/non-JSON cache, non-JSON input, zero/past reset time, long prompt, source lock chain, CWD isolation, rate boundary** |
+| **Hook registration** | **T93-T96** | **Script existence, shebang, settings.json wiring, safety guards (set -euo, umask)** |
 
 ### Daemon 단위 테스트
 
