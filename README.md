@@ -12,18 +12,21 @@ Rate limit 100% → hook saves session state → daemon waits for recovery → s
 2. **Hook scripts** detect rate limit 100% on Stop/StopFailure/SubagentStop/UserPromptSubmit events
 3. **State file** is created at `<project>/.claude/auto-resume/queued/<session-id>.json`
 4. **Daemon** polls until reset time, verifies rate recovery, then resumes the session
-5. **Resume** via `claude --resume <session-id>` (tmux interactive or headless fallback)
+5. **Resume** via `claude -p --resume <session-id>` (headless mode)
 
 ## Features
 
 - **Hook API-based** — not tmux polling or process watching
+- **Overuse detection** — automatically detects "additional usage" mode and cancels unnecessary schedules
 - **Per-session state files** — multiple sessions can be tracked independently
 - **Parallel subagent support** — SubagentStop events trigger scheduling too
-- **Smart resume** — tmux pane detection with headless fallback
+- **Active session safety** — skips resume when session is already running (no kill)
 - **Cancellation** — delete the state file to cancel any pending resume
 - **Project-level opt-out** — enable/disable per project
 - **Success/failure history** — archived with error output for debugging
 - **Duplicate prevention** — new daemon kills existing one for same session
+- **Resume metadata** — resumed session knows it was auto-resumed and how long it waited
+- **Log cleanup** — automatic rotation (7-day resume logs, 30-day event logs, 50-file archive cap)
 
 ## Requirements
 
@@ -62,6 +65,42 @@ git clone https://github.com/Hyungkeun-Park-Nota/claude-auto-resume.git ~/.claud
 | `~/.claude/bin/statusline-rate-cache-wrapper.sh` | Rate limit data cache |
 | `~/.claude/bin/auto-resume-help.sh` | Help output |
 | `~/.claude/bin/auto-resume-status.sh` | Status dashboard |
+| `~/.claude/bin/test-rate-limit-simulation.sh` | Hook simulation test suite |
+
+## Overuse Detection
+
+When "additional usage" (overuse) is enabled in your Anthropic account, API calls succeed even at 100% rate — meaning the session never actually stops. Without overuse detection, auto-resume would create unnecessary schedules and waste tokens trying to resume sessions that are still running.
+
+### How It Works
+
+Each session state file tracks two extra fields:
+
+| Field | Description |
+|-------|-------------|
+| `created_at_rate` | Rate % when the schedule was created |
+| `source` | Which hook created it (`user_prompt`, `stop`, `subagent_stop`, `stop_failure`) |
+
+**Detection algorithm:**
+- If Stop fires at 100% AND the existing schedule was created at 100% (`created_at_rate >= 100`) AND `source != stop_failure` → **overuse confirmed** → schedule deleted
+- If the turn completed, it means the client-side rate limiter didn't block it, proving overuse is active
+
+**Safety guards:**
+- **SubagentStop exempt** — parallel agent completion is not overuse evidence
+- **StopFailure lock** — sets `source: stop_failure` to protect genuine API errors from being classified as overuse
+- **TOCTOU re-read** — re-verifies source immediately before deletion to prevent race conditions
+
+### Overuse Scenarios
+
+```
+Normal session (overuse ON):
+  UPS(100%) → schedule {created_at_rate:100} → turn succeeds → Stop detects overuse → ✅ deleted
+
+Ralph loop (overuse ON):
+  Stop(100%) → schedule {created_at_rate:100} → next turn succeeds → Stop detects overuse → ✅ deleted
+
+Overuse → hard limit transition:
+  Overuse keeps deleting → Anthropic ends overuse → client blocks → schedule survives → ✅ daemon resumes
+```
 
 ## State Files
 
@@ -69,11 +108,35 @@ git clone https://github.com/Hyungkeun-Park-Nota/claude-auto-resume.git ~/.claud
 <project>/.claude/auto-resume/
 ├── queued/        ← pending resume schedules
 │   └── <session-id>.json
-├── success/       ← completed resumes
-│   └── <session-id>.json   (includes completed_at)
-└── failed/        ← failed resumes
-    └── <session-id>.json   (includes error_output)
+├── success/       ← completed resumes (includes completed_at)
+│   └── <session-id>.json
+└── failed/        ← failed resumes (includes error_output)
+    └── <session-id>.json
 ```
+
+### State File Format
+
+```json
+{
+  "session_id": "abc-123-def",
+  "resume_at": 1777662000,
+  "resume_at_human": "2026-05-02T04:00:00+09:00",
+  "scheduled_at": 1777648658,
+  "created_at_rate": 100,
+  "source": "user_prompt",
+  "prompt": "If any agents failed in the previous task, do not perform their work directly — re-launch the same agents. If it was not an agent failure, continue with the remaining work."
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `session_id` | Resume target session |
+| `resume_at` | Reset epoch timestamp |
+| `resume_at_human` | Human-readable ISO time |
+| `scheduled_at` | When the schedule was created |
+| `created_at_rate` | Rate % at creation time (overuse detection) |
+| `source` | Creating hook: `user_prompt`, `stop`, `subagent_stop`, `stop_failure` |
+| `prompt` | Prompt to send on resume (editable by user) |
 
 ## Cancel a Pending Resume
 
@@ -99,6 +162,20 @@ Auto-resume is **enabled by default** for all projects after setup. To opt out a
 
 This creates `<project>/.claude/auto-resume.conf` with `enabled=true/false`.
 
+## User-Facing Messages
+
+All messages appear in stderr (visible to user, not to model):
+
+| Event | Message |
+|-------|---------|
+| Schedule created | `⏳ Auto-resume scheduled at {time} (in {N}m {N}s)` |
+| Already scheduled | `⏳ Auto-resume already scheduled at {time} (in {N}m {N}s)` |
+| Stop confirms | `⏳ Auto-resume confirmed at {time} (in {N}m {N}s)` |
+| Overuse detected | `✅ Overuse detected (turn completed at 100%). Schedule cancelled.` |
+| Rate recovered | `✅ Rate recovered. Auto-resume cleared.` |
+
+All messages include the state file path and cancel command.
+
 ## Architecture
 
 ```
@@ -106,29 +183,88 @@ This creates `<project>/.claude/auto-resume.conf` with `enabled=true/false`.
 │                    Claude Code Session                       │
 │                                                             │
 │  statusline ──→ statusline-rate-cache-wrapper.sh            │
-│                        │                                    │
+│                        │ (jq atomic write)                  │
 │                        ▼                                    │
 │              ~/.claude/rate-limits.json                      │
 │                        ▲                                    │
 │  ┌─────────┐  ┌───────┴──────┐  ┌────────────────┐         │
 │  │  Stop   │  │ StopFailure  │  │UserPromptSubmit │         │
-│  │Subagent │  │              │  │                 │         │
-│  │  Stop   │  │              │  │                 │         │
+│  │Subagent │  │  (source     │  │  (user prompt   │         │
+│  │  Stop   │  │   lock)      │  │   preserved)    │         │
 │  └────┬────┘  └──────┬───────┘  └───────┬─────────┘        │
+│       │              │                  │                   │
+│       │   overuse    │   source lock    │  speculative      │
+│       │   detection  │   protection     │  scheduling       │
 │       └──────────────┼──────────────────┘                   │
 │                      ▼                                      │
 │  <project>/.claude/auto-resume/queued/<session-id>.json     │
+│    { created_at_rate, source, prompt, resume_at, ... }      │
 │                      │                                      │
 │                      ▼                                      │
 │        claude-auto-resume.sh (background daemon)            │
 │              │                                              │
 │              ├─ poll every 60s (cancel check)               │
-│              ├─ verify rate recovery                        │
-│              └─ resume session                              │
-│                   ├─ tmux → kill + send-keys (interactive)  │
-│                   └─ no tmux → claude -p --resume (headless)│
+│              ├─ verify rate recovery (5 retries)            │
+│              ├─ active session → skip + archive             │
+│              └─ inactive → timeout 3600 claude -p --resume  │
+│                                                             │
+│        ┌──────────────────────────────────────┐             │
+│        │ success/ │ failed/ │ (archived)      │             │
+│        └──────────────────────────────────────┘             │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+## Logs
+
+```
+~/.claude/logs/
+├── auto-resume-YYYY-MM-DD.log    # Daily event log (30-day retention)
+└── resume-<session-id>.log       # Per-daemon log (7-day retention)
+```
+
+### Event Log Prefixes
+
+| Prefix | Source |
+|--------|--------|
+| `SCHEDULED` | Stop hook created schedule |
+| `SCHEDULED_BY_GUARD` | UserPromptSubmit created schedule |
+| `SCHEDULED_BY_FAILURE` | StopFailure created schedule |
+| `CLEARED` | Rate recovered, schedule deleted |
+| `OVERUSE_DETECTED` | Overuse detected, schedule deleted |
+| `OVERUSE_CLEARED` | Overuse schedule cleared on rate recovery |
+
+### Daemon Log Prefixes
+
+| Prefix | Description |
+|--------|-------------|
+| `WAITING` | Daemon started, waiting for reset time |
+| `CANCELLED` | State file deleted during wait |
+| `RATE_RECOVERED` | Rate confirmed below 100% |
+| `SKIPPED` | Active session detected, skipping |
+| `BG_RESUME` | Headless resume started |
+| `DONE` | Resume completed |
+| `RESUME_FAILED` | Resume failed (archived to failed/) |
+
+## Testing
+
+```bash
+bash ~/.claude/bin/test-rate-limit-simulation.sh
+```
+
+56 test cases, 172 assertions covering:
+
+| Category | Tests | Coverage |
+|----------|-------|----------|
+| Stop hook basic | T01-T06 | Rate states, stale/missing cache |
+| Prompt guard basic | T07-T12 | Scheduling, dedup, edge cases |
+| StopFailure basic | T13-T17 | API error fallback, source lock |
+| Multi-session | T18-T20 | Coexistence, selective cleanup |
+| Special characters | T21-T26 | Quotes, backslash, newline, Korean, JSON |
+| Both limits at 100% | T27-T29 | Reset time selection |
+| Edge cases | T30-T36 | 8h limit, rounding, empty input, atomic write |
+| Full lifecycle | T37-T38 | Guard → StopFailure lock → Stop confirm → recovery |
+| Corrupted files | T39-T43 | Invalid JSON, empty files, directory cleanup |
+| **Overuse detection** | **T44-T56** | **Overuse via UPS/Stop, SubagentStop exempt, StopFailure lock, field validation, invalid session ID** |
 
 ## Comparison with Existing Tools
 
@@ -136,12 +272,38 @@ This creates `<project>/.claude/auto-resume.conf` with `enabled=true/false`.
 |---------|------------------------|--------------|----------------------|
 | Detection | tmux polling (5s) | exit code check | Hook API events |
 | Resume method | tmux send-keys "continue" | `claude -c` (history only) | `claude --resume` (full context) |
+| Overuse detection | No | No | `created_at_rate` + `source` |
 | Cancellation | kill process | Ctrl+C during sleep | Delete state file |
 | Parallel sessions | No | No | Per-session state files |
 | Subagent support | No | No | SubagentStop hook |
 | Failure tracking | No | No | Failed dir + error_output |
+| Active session safety | No (kills) | N/A | Skip + archive |
 | Project opt-out | No | No | Per-project conf |
-| tmux required | Yes | No | Optional (auto-detect) |
+| tmux required | Yes | No | No (headless default) |
+
+## Changelog
+
+### v2.0.0
+
+**Overuse Detection & Daemon Safety**
+
+- **Overuse detection**: `created_at_rate` + `source` fields in session.json to detect and cancel unnecessary schedules when "additional usage" is active
+- **SubagentStop exception**: Parallel agent completion exempt from overuse detection
+- **StopFailure source lock**: `source: stop_failure` protects genuine API errors from overuse classification
+- **TOCTOU re-read guard**: Re-verifies source before deletion to prevent race conditions
+- **Active session skip**: Daemon skips (not kills) active sessions
+- **Process detection**: `/proc/$pid/cmdline` inspection replaces `pgrep -af`
+- **Resume timeout**: `timeout 3600` prevents unbounded blocking
+- **Log cleanup**: 7-day resume logs, 30-day event logs, 50-file archive cap
+- **Resume metadata**: `[Auto-resumed after Nm wait]` prefix in resumed sessions
+- **Safe JSON**: `jq -n --argjson` in statusline wrapper replaces string interpolation
+- **Explicit PATH**: `find_claude_bin()` replaces shell profile sourcing
+- **User-visible logging**: stderr messages with time delta, state path, cancel command
+- **Test suite**: 56 tests, 172 assertions (13 new overuse detection tests)
+
+### v1.0.0
+
+Initial release — hook-based auto-resume with per-session state files, subagent support, and tmux/headless resume.
 
 ## License
 
