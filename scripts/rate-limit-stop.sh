@@ -80,16 +80,7 @@ if [ ! -f "$CACHE" ]; then
 fi
 DATA=$(jq '.' "$CACHE" 2>/dev/null) || { _diag "EXIT" "reason=cache_parse_fail"; exit 0; }
 
-# ── 3. Freshness check (skip if cache older than 5 minutes) ──
-LAST_UPDATED=$(echo "$DATA" | jq -r '.last_updated // 0')
-NOW=$(date +%s)
-CACHE_AGE=$((NOW - LAST_UPDATED))
-if [ "$CACHE_AGE" -gt 300 ]; then
-    _diag "EXIT" "reason=stale_cache age=${CACHE_AGE}s last_updated=$LAST_UPDATED"
-    exit 0
-fi
-
-# ── 4. Check rate limits ──
+# ── 3. Check rate limits (before freshness gate) ──
 FIVE_PCT=$(echo "$DATA" | jq -r '.rate_limits.five_hour.used_percentage // 0')
 FIVE_RESET=$(echo "$DATA" | jq -r '.rate_limits.five_hour.resets_at // 0')
 SEVEN_PCT=$(echo "$DATA" | jq -r '.rate_limits.seven_day.used_percentage // 0')
@@ -97,6 +88,16 @@ SEVEN_RESET=$(echo "$DATA" | jq -r '.rate_limits.seven_day.resets_at // 0')
 
 FIVE_INT=$(printf '%.0f' "$FIVE_PCT" 2>/dev/null || echo 0)
 SEVEN_INT=$(printf '%.0f' "$SEVEN_PCT" 2>/dev/null || echo 0)
+
+# ── 4. Freshness + rate gate ──
+# Rate only resets downward — stale cache at ≥100% is still valid for scheduling
+LAST_UPDATED=$(echo "$DATA" | jq -r '.last_updated // 0')
+NOW=$(date +%s)
+CACHE_AGE=$((NOW - LAST_UPDATED))
+if [ "$CACHE_AGE" -gt 300 ] && [ "$FIVE_INT" -lt 100 ] && [ "$SEVEN_INT" -lt 100 ]; then
+    _diag "EXIT" "reason=stale_cache age=${CACHE_AGE}s last_updated=$LAST_UPDATED"
+    exit 0
+fi
 
 _diag "RATE" "five=${FIVE_PCT}% seven=${SEVEN_PCT}% cache_age=${CACHE_AGE}s"
 

@@ -525,7 +525,7 @@ fi
 | ~~CRITICAL~~ | ~~100%에서 statusline 데이터 안 옴~~ | trace 로그로 정상 수신 확인 |
 | ~~CRITICAL~~ | ~~클라이언트 차단 시 hook 안 fire~~ | UserPromptSubmit에서 선제적 스케줄링으로 해결 (실환경 검증 완료) |
 | ~~HIGH~~ | ~~불필요한 resume (정상 종료 + 100%)~~ | v4: `created_at_rate` + `source` 기반 overuse 감지로 해결. Active 세션은 skip |
-| HIGH | Stale 데이터 | atomic write (tmp+mv) + Stop hook에서 0.3s delay + 5분 freshness 체크 |
+| ~~HIGH~~ | ~~Stale 데이터~~ | atomic write (tmp+mv) + Stop hook에서 0.3s delay + freshness+rate 결합 게이트 (stale cache여도 rate≥100%면 스케줄 생성 — rate는 하향만 가능) |
 | HIGH | 중복 예약 | `<session-id>.json` 존재 + session_id 유효성 체크 |
 | HIGH | 7일 한도 | 두 window 모두 확인, max(resets_at), 8시간 초과 시 skip |
 | HIGH | 머신 sleep | wall-clock 폴링 루프 (60초 간격) |
@@ -653,7 +653,7 @@ Overuse 감지 시:
 
 ## Test
 
-### Hook 시뮬레이션 테스트 (66개 시나리오, 214 assertions)
+### Hook 시뮬레이션 테스트 (72개 시나리오, 237 assertions)
 
 ```bash
 bash ~/.claude/bin/test-rate-limit-simulation.sh
@@ -672,6 +672,7 @@ bash ~/.claude/bin/test-rate-limit-simulation.sh
 | Corrupted files | T39-T43 | Invalid JSON, empty files, directory cleanup |
 | **Overuse detection** | **T44-T56** | **Overuse via UPS/Stop, SubagentStop exempt, StopFailure lock, field validation, invalid session ID** |
 | **Subagent marker (G16)** | **T57-T66** | **Marker create/delete, overuse skip with marker, stale cache cleanup, multi-agent partial, full G16 lifecycle, validation, opt-out, empty dir** |
+| **Stale cache + rate gate (G17)** | **T67-T72** | **Stale cache at low rate skips, stale cache at 100% creates schedule, overuse→block transition, no false cleanup, prompt preservation** |
 
 ### Daemon 단위 테스트
 

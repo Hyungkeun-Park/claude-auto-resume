@@ -285,12 +285,13 @@ assert_file_not_exists "$(resume_file_for sess-A)"
 assert_file_exists "$(resume_file_for sess-B)"
 assert_stderr_contains "$TEST_DIR/stderr_out" "Rate recovered"
 
-# ─── T05: Stop hook, stale cache → skip ────────────────────────────────────
-setup_test "T05_stop_stale_cache"
+# ─── T05: Stop hook, stale cache at 100% → still creates schedule ─────────
+setup_test "T05_stop_stale_cache_at_limit"
 write_cache 100 57 "$FUTURE" "$FUTURE" "$((NOW - 600))"
 EXIT=$(run_stop_hook "$(make_hook_input "sess-005")")
 assert_exit_code "$EXIT" 0
-assert_file_not_exists "$(resume_file_for sess-005)"
+assert_file_exists "$(resume_file_for sess-005)"
+assert_json_field "$(resume_file_for sess-005)" '.session_id' "sess-005"
 
 # ─── T06: Stop hook, no cache file → skip ──────────────────────────────────
 setup_test "T06_stop_no_cache"
@@ -346,12 +347,14 @@ assert_file_exists "$(resume_file_for sess-010)"
 assert_json_field "$(resume_file_for sess-010)" '.prompt' "my prompt"
 assert_file_count "$RESUME_DIR/queued" 2
 
-# ─── T11: Prompt guard, stale cache → skip ─────────────────────────────────
-setup_test "T11_guard_stale_cache"
+# ─── T11: Prompt guard, stale cache at 100% → still creates schedule ──────
+setup_test "T11_guard_stale_cache_at_limit"
 write_cache 100 57 "$FUTURE" "$FUTURE" "$((NOW - 600))"
-EXIT=$(run_prompt_guard "$(make_hook_input "sess-011" "$TEST_CWD" "prompt")")
+EXIT=$(run_prompt_guard "$(make_hook_input "sess-011" "$TEST_CWD" "stale prompt")")
 assert_exit_code "$EXIT" 0
-assert_file_not_exists "$(resume_file_for sess-011)"
+assert_file_exists "$(resume_file_for sess-011)"
+assert_json_field "$(resume_file_for sess-011)" '.session_id' "sess-011"
+assert_json_field "$(resume_file_for sess-011)" '.prompt' "stale prompt"
 
 # ─── T12: Prompt guard, no cache file → skip ───────────────────────────────
 setup_test "T12_guard_no_cache"
@@ -405,12 +408,14 @@ assert_exit_code "$EXIT" 0
 assert_file_exists "$(resume_file_for sess-other)"
 assert_file_exists "$(resume_file_for sess-016)"
 
-# ─── T17: StopFailure, stale cache → skip ──────────────────────────────────
-setup_test "T17_failure_stale_cache"
+# ─── T17: StopFailure, stale cache at 100% → still creates schedule ───────
+setup_test "T17_failure_stale_cache_at_limit"
 write_cache 100 57 "$FUTURE" "$FUTURE" "$((NOW - 600))"
 EXIT=$(run_stop_failure "$(make_hook_input "sess-017")")
 assert_exit_code "$EXIT" 0
-assert_file_not_exists "$(resume_file_for sess-017)"
+assert_file_exists "$(resume_file_for sess-017)"
+assert_json_field "$(resume_file_for sess-017)" '.session_id' "sess-017"
+assert_json_field "$(resume_file_for sess-017)" '.source' "stop_failure"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Tests: Multi-Session Scenarios
@@ -1052,6 +1057,64 @@ EXIT=$(run_stop_hook "$(make_hook_input "sess-066")")
 assert_exit_code "$EXIT" 0
 assert_file_not_exists "$(resume_file_for sess-066)"
 assert_stderr_contains "$TEST_DIR/stderr_out" "Overuse detected"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Tests: Stale Cache + Rate Gate (G17 Fix)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ─── T67: Stop hook, stale cache + rate < 100% → still skips ─────────────
+setup_test "T67_stop_stale_cache_low_rate"
+write_cache 80 57 "$FUTURE" "$FUTURE" "$((NOW - 600))"
+EXIT=$(run_stop_hook "$(make_hook_input "sess-067")")
+assert_exit_code "$EXIT" 0
+assert_file_not_exists "$(resume_file_for sess-067)"
+
+# ─── T68: Prompt guard, stale cache + rate < 100% → still skips ──────────
+setup_test "T68_guard_stale_cache_low_rate"
+write_cache 80 57 "$FUTURE" "$FUTURE" "$((NOW - 600))"
+EXIT=$(run_prompt_guard "$(make_hook_input "sess-068" "$TEST_CWD" "stale low")")
+assert_exit_code "$EXIT" 0
+assert_file_not_exists "$(resume_file_for sess-068)"
+
+# ─── T69: StopFailure, stale cache + rate < 100% → still skips ───────────
+setup_test "T69_failure_stale_cache_low_rate"
+write_cache 80 57 "$FUTURE" "$FUTURE" "$((NOW - 600))"
+EXIT=$(run_stop_failure "$(make_hook_input "sess-069")")
+assert_exit_code "$EXIT" 0
+assert_file_not_exists "$(resume_file_for sess-069)"
+
+# ─── T70: Stale cache at 100% — Stop creates schedule (overuse→block) ────
+# Simulates: overuse turns off, client blocks prompt, cache goes stale at 100%
+setup_test "T70_stop_stale_cache_overuse_to_block"
+write_cache 101 57 "$FUTURE" "$FUTURE" "$((NOW - 900))"
+EXIT=$(run_stop_hook "$(make_hook_input "sess-070")")
+assert_exit_code "$EXIT" 0
+assert_file_exists "$(resume_file_for sess-070)"
+assert_json_field "$(resume_file_for sess-070)" '.source' "stop"
+assert_stderr_contains "$TEST_DIR/stderr_out" "Auto-resume"
+
+# ─── T71: Stale cache — Stop does NOT clean up existing schedule ──────────
+# If cache is stale + rate < 100%, don't trust it for cleanup either
+setup_test "T71_stop_stale_cache_no_cleanup"
+write_cache 100 57
+# First, create a schedule with fresh cache
+EXIT=$(run_stop_hook "$(make_hook_input "sess-071")")
+assert_exit_code "$EXIT" 0
+assert_file_exists "$(resume_file_for sess-071)"
+# Now make cache stale with rate < 100% — should NOT clean up
+write_cache 50 30 "$FUTURE" "$FUTURE" "$((NOW - 600))"
+EXIT=$(run_stop_hook "$(make_hook_input "sess-071")")
+assert_exit_code "$EXIT" 0
+assert_file_exists "$(resume_file_for sess-071)"
+
+# ─── T72: Stale cache at 100% — Guard preserves user prompt ──────────────
+setup_test "T72_guard_stale_cache_preserves_prompt"
+write_cache 100 57 "$FUTURE" "$FUTURE" "$((NOW - 400))"
+EXIT=$(run_prompt_guard "$(make_hook_input "sess-072" "$TEST_CWD" "my important work")")
+assert_exit_code "$EXIT" 0
+assert_file_exists "$(resume_file_for sess-072)"
+assert_json_field "$(resume_file_for sess-072)" '.prompt' "my important work"
+assert_json_field "$(resume_file_for sess-072)" '.source' "user_prompt"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Summary

@@ -253,7 +253,7 @@ All messages include the state file path and cancel command.
 bash ~/.claude/bin/test-rate-limit-simulation.sh
 ```
 
-66 test cases, 214 assertions covering:
+72 test cases, 237 assertions covering:
 
 | Category | Tests | Coverage |
 |----------|-------|----------|
@@ -268,6 +268,7 @@ bash ~/.claude/bin/test-rate-limit-simulation.sh
 | Corrupted files | T39-T43 | Invalid JSON, empty files, directory cleanup |
 | **Overuse detection** | **T44-T56** | **Overuse via UPS/Stop, SubagentStop exempt, StopFailure lock, field validation, invalid session ID** |
 | **Subagent marker (G16)** | **T57-T66** | **Marker create/delete, overuse skip, stale cache cleanup, full G16 lifecycle, validation** |
+| **Stale cache + rate gate (G17)** | **T67-T72** | **Stale at low rate skips, stale at 100% schedules, overuse→block transition, prompt preservation** |
 
 ## Comparison with Existing Tools
 
@@ -292,6 +293,15 @@ bash ~/.claude/bin/test-rate-limit-simulation.sh
 | [docs/gotchas.md](docs/gotchas.md) | Edge cases index — individual entries in [docs/gotchas/](docs/gotchas/) |
 
 ## Changelog
+
+### v1.2.1
+
+**Stale Cache Freshness Gate Fix (G17)**
+
+- **G17 fix — stale cache blocks scheduling at 100%**: Freshness check was unconditionally exiting on stale cache (>5min), even when cached rate was ≥100%. Since rate only resets downward, stale cache at ≥100% is valid for scheduling. Combined freshness+rate gate: exit only when stale AND rate < 100%
+- **All three hooks fixed**: `rate-limit-prompt-guard.sh`, `rate-limit-stop.sh`, `rate-limit-stop-failure.sh` — rate data now read before freshness gate
+- **Overuse→block transition**: When overuse turns off and client blocks, statusline stops updating but schedule is now correctly created from stale cache at ≥100%
+- **Test suite**: 66 → 72 tests, 214 → 237 assertions (T05/T11/T17 updated, 6 new stale cache+rate gate tests T67-T72)
 
 ### v1.2.0
 

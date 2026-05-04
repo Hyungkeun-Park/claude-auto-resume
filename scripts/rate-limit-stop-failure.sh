@@ -28,12 +28,7 @@ if [ ! -f "$CACHE" ]; then
 fi
 DATA=$(jq '.' "$CACHE" 2>/dev/null) || exit 0
 
-# 2. Freshness check
-LAST_UPDATED=$(echo "$DATA" | jq -r '.last_updated // 0')
-NOW=$(date +%s)
-[ $((NOW - LAST_UPDATED)) -gt 300 ] && exit 0
-
-# 3. Check rate limits
+# 2. Check rate limits (before freshness gate — needed for stale-but-at-limit logic)
 FIVE_PCT=$(echo "$DATA" | jq -r '.rate_limits.five_hour.used_percentage // 0')
 FIVE_RESET=$(echo "$DATA" | jq -r '.rate_limits.five_hour.resets_at // 0')
 SEVEN_PCT=$(echo "$DATA" | jq -r '.rate_limits.seven_day.used_percentage // 0')
@@ -41,6 +36,14 @@ SEVEN_RESET=$(echo "$DATA" | jq -r '.rate_limits.seven_day.resets_at // 0')
 
 FIVE_INT=$(printf '%.0f' "$FIVE_PCT" 2>/dev/null || echo 0)
 SEVEN_INT=$(printf '%.0f' "$SEVEN_PCT" 2>/dev/null || echo 0)
+
+# 3. Freshness + rate gate
+# Rate only resets downward — stale cache at ≥100% is still valid for scheduling
+LAST_UPDATED=$(echo "$DATA" | jq -r '.last_updated // 0')
+NOW=$(date +%s)
+if [ $((NOW - LAST_UPDATED)) -gt 300 ] && [ "$FIVE_INT" -lt 100 ] && [ "$SEVEN_INT" -lt 100 ]; then
+    exit 0
+fi
 
 [ "$FIVE_INT" -lt 100 ] && [ "$SEVEN_INT" -lt 100 ] && exit 0
 
