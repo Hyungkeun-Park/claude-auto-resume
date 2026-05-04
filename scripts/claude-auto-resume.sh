@@ -1,0 +1,291 @@
+#!/usr/bin/env bash
+# Resume executor: wait until rate limit resets, then resume the session.
+# Usage: claude-auto-resume.sh <session_id> <resume_epoch> <cwd>
+#
+# State file: <cwd>/.claude/auto-resume/queued/<session_id>.json
+# Cancellation: delete the state file (checked every 60 seconds)
+#
+# Resume strategies:
+# - Session inactive: claude -p --resume <id> "<prompt>"
+# - Session active + tmux: kill → reconnect in same pane → inject prompt
+# - Session active + no tmux: kill → claude -p --resume <id> "<prompt>"
+
+set -uo pipefail
+
+SESSION_ID="$1"
+TARGET_EPOCH="$2"
+CWD="$3"
+
+if [ -z "$SESSION_ID" ] || [ -z "$TARGET_EPOCH" ] || [ -z "$CWD" ]; then
+    echo "Usage: claude-auto-resume.sh <session_id> <resume_epoch> <cwd>" >&2
+    exit 1
+fi
+
+RESUME_DIR="$CWD/.claude/auto-resume"
+QUEUED_DIR="$RESUME_DIR/queued"
+SUCCESS_DIR="$RESUME_DIR/success"
+FAILED_DIR="$RESUME_DIR/failed"
+RESUME_FILE="$QUEUED_DIR/${SESSION_ID}.json"
+CACHE="$HOME/.claude/rate-limits.json"
+MAX_RETRIES=5
+STALE_THRESHOLD=300
+FIXED_PROMPT="If any agents failed in the previous task, do not perform their work directly — re-launch the same agents. If it was not an agent failure, continue with the remaining work."
+
+mkdir -p "$HOME/.claude/logs"
+
+log() {
+    local LOG_FILE="$HOME/.claude/logs/auto-resume-$(date +%Y-%m-%d).log"
+    echo "$(date -Iseconds) $1" >> "$LOG_FILE"
+}
+
+RESUME_ERROR_OUTPUT=""
+
+archive_resume_file() {
+    local result=$1
+    local reason=${2:-""}
+    [ ! -f "$RESUME_FILE" ] && return 0
+
+    local dest_dir
+    if [ "$result" = "success" ]; then
+        dest_dir="$SUCCESS_DIR"
+    else
+        dest_dir="$FAILED_DIR"
+    fi
+    mkdir -p "$dest_dir"
+
+    local completed_at
+    completed_at=$(date -Iseconds)
+    jq --arg r "$result" --arg reason "$reason" --arg cat "$completed_at" \
+        --arg err "$RESUME_ERROR_OUTPUT" \
+        '. + {result: $r, reason: $reason, completed_at: $cat} | if $err != "" then . + {error_output: $err} else . end' \
+        "$RESUME_FILE" > "$RESUME_FILE.tmp" 2>/dev/null && mv "$RESUME_FILE.tmp" "$dest_dir/${SESSION_ID}.json"
+    rm -f "$RESUME_FILE" "$RESUME_FILE.tmp"
+}
+
+# Find claude binary (needed for all resume paths)
+find_claude_bin() {
+    local bin
+    bin=$(command -v claude 2>/dev/null || echo "")
+    if [ -z "$bin" ]; then
+        [ -f "$HOME/.bashrc" ] && source "$HOME/.bashrc" 2>/dev/null || true
+        [ -f "$HOME/.zshrc" ] && source "$HOME/.zshrc" 2>/dev/null || true
+        [ -f "$HOME/.profile" ] && source "$HOME/.profile" 2>/dev/null || true
+        bin=$(command -v claude 2>/dev/null || echo "")
+    fi
+    if [ -z "$bin" ]; then
+        for p in "$HOME/.claude/local/bin/claude" "$HOME/.local/bin/claude" "/usr/local/bin/claude"; do
+            [ -x "$p" ] && { bin="$p"; break; }
+        done
+    fi
+    echo "$bin"
+}
+
+# Find tmux pane for a given PID (walks up process tree)
+find_tmux_pane() {
+    local target_pid=$1
+    local pid=$target_pid
+
+    command -v tmux >/dev/null 2>&1 || return 1
+    tmux info >/dev/null 2>&1 || return 1
+
+    while [ "$pid" != "1" ] && [ -n "$pid" ] && [ "$pid" != "0" ]; do
+        local pane
+        pane=$(tmux list-panes -a -F '#{pane_pid} #{pane_id}' 2>/dev/null \
+            | awk -v p="$pid" '$1 == p {print $2}')
+        if [ -n "$pane" ]; then
+            echo "$pane"
+            return 0
+        fi
+        pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+    done
+    return 1
+}
+
+# Kill claude process and wait for it to exit
+kill_claude() {
+    local pid=$1
+    kill "$pid" 2>/dev/null
+    for i in $(seq 1 5); do
+        kill -0 "$pid" 2>/dev/null || return 0
+        sleep 1
+    done
+    kill -9 "$pid" 2>/dev/null || true
+    sleep 1
+}
+
+# Resume via tmux: reconnect in same pane + inject prompt
+resume_via_tmux() {
+    local pane=$1
+    local prompt=$2
+
+    log "TMUX_RESUME session=$SESSION_ID pane=$pane"
+
+    # Wait for shell prompt to appear after kill
+    sleep 2
+
+    # Send resume command
+    tmux send-keys -t "$pane" "claude --resume $SESSION_ID" Enter
+
+    # Wait for claude ❯ prompt (up to 30 seconds)
+    local ready=false
+    for i in $(seq 1 30); do
+        if tmux capture-pane -t "$pane" -p 2>/dev/null | grep -q '❯'; then
+            ready=true
+            break
+        fi
+        sleep 1
+    done
+
+    if [ "$ready" != "true" ]; then
+        RESUME_ERROR_OUTPUT="tmux prompt '❯' not detected within 30s in pane $pane"
+        log "TMUX_TIMEOUT session=$SESSION_ID pane=$pane reason=prompt_not_detected"
+        return 1
+    fi
+
+    # Send the prompt (use -l for literal text, avoid key name interpretation)
+    tmux send-keys -t "$pane" -l "$prompt"
+    tmux send-keys -t "$pane" Enter
+
+    log "TMUX_RESUMED session=$SESSION_ID pane=$pane prompt=\"${prompt:0:80}\""
+    return 0
+}
+
+# Resume via background print mode
+resume_via_print() {
+    local prompt=$1
+
+    local claude_bin
+    claude_bin=$(find_claude_bin)
+    if [ -z "$claude_bin" ]; then
+        RESUME_ERROR_OUTPUT="claude binary not found in PATH, ~/.bashrc, ~/.zshrc, or common locations"
+        log "FAILED session=$SESSION_ID reason=claude_binary_not_found"
+        return 1
+    fi
+
+    log "BG_RESUME session=$SESSION_ID prompt=\"${prompt:0:80}\""
+
+    cd "$CWD"
+    local output
+    output=$("$claude_bin" -p --resume "$SESSION_ID" "$prompt" 2>&1)
+    local exit_code=$?
+
+    if [ "$exit_code" -ne 0 ]; then
+        RESUME_ERROR_OUTPUT=$(echo "$output" | tail -20)
+        log "DONE session=$SESSION_ID exit_code=$exit_code error=\"${RESUME_ERROR_OUTPUT:0:200}\""
+    else
+        log "DONE session=$SESSION_ID exit_code=$exit_code"
+    fi
+    return $exit_code
+}
+
+TARGET_HUMAN=$(date -d "@$TARGET_EPOCH" -Iseconds 2>/dev/null || date -r "$TARGET_EPOCH" -Iseconds 2>/dev/null || echo "$TARGET_EPOCH")
+
+# ── 0. Kill any existing daemon for this session (prevent duplicates) ──
+for old_pid in $(pgrep -af "claude-auto-resume.sh.*$SESSION_ID" 2>/dev/null | awk '{print $1}'); do
+    [ "$old_pid" = "$$" ] && continue
+    log "KILL_OLD_DAEMON session=$SESSION_ID old_pid=$old_pid"
+    kill "$old_pid" 2>/dev/null || true
+done
+
+# ── 1. Wall-clock polling (handles machine sleep correctly) ──
+log "WAITING session=$SESSION_ID target=$TARGET_HUMAN"
+
+while [ "$(date +%s)" -lt "$TARGET_EPOCH" ]; do
+    if [ ! -f "$RESUME_FILE" ]; then
+        log "CANCELLED session=$SESSION_ID reason=file_deleted_during_wait"
+        exit 0
+    fi
+    sleep 60
+done
+
+# ── 2. Pre-resume checks ──
+
+# 2a. Cancellation check
+if [ ! -f "$RESUME_FILE" ]; then
+    log "CANCELLED session=$SESSION_ID reason=file_deleted_at_resume_time"
+    exit 0
+fi
+
+# 2b. Rate limit re-check with retries
+RETRY=0
+RATE_OK=false
+
+while [ $RETRY -lt $MAX_RETRIES ]; do
+    if [ -f "$CACHE" ]; then
+        CACHE_TIME=$(jq -r '.last_updated // 0' "$CACHE" 2>/dev/null)
+        CURRENT=$(date +%s)
+        CACHE_AGE=$((CURRENT - CACHE_TIME))
+
+        if [ "$CACHE_AGE" -gt "$STALE_THRESHOLD" ]; then
+            log "CACHE_STALE session=$SESSION_ID age=${CACHE_AGE}s assuming_recovered"
+            RATE_OK=true
+            break
+        fi
+
+        FIVE_INT=$(printf '%.0f' "$(jq -r '.rate_limits.five_hour.used_percentage // 0' "$CACHE" 2>/dev/null)" 2>/dev/null || echo 0)
+        SEVEN_INT=$(printf '%.0f' "$(jq -r '.rate_limits.seven_day.used_percentage // 0' "$CACHE" 2>/dev/null)" 2>/dev/null || echo 0)
+
+        if [ "$FIVE_INT" -lt 100 ] && [ "$SEVEN_INT" -lt 100 ]; then
+            log "RATE_RECOVERED session=$SESSION_ID five=${FIVE_INT}% seven=${SEVEN_INT}%"
+            RATE_OK=true
+            break
+        fi
+    else
+        log "NO_CACHE session=$SESSION_ID assuming_recovered"
+        RATE_OK=true
+        break
+    fi
+
+    RETRY=$((RETRY + 1))
+    log "STILL_LIMITED session=$SESSION_ID retry=$RETRY five=${FIVE_INT:-?}% seven=${SEVEN_INT:-?}%"
+    sleep 60
+done
+
+if [ "$RATE_OK" != "true" ]; then
+    log "GAVE_UP session=$SESSION_ID reason=still_rate_limited_after_${MAX_RETRIES}_retries"
+    archive_resume_file "failed" "still_rate_limited_after_${MAX_RETRIES}_retries"
+    exit 1
+fi
+
+# ── 3. Read prompt from state file ──
+SAVED_PROMPT="$FIXED_PROMPT"
+if [ -f "$RESUME_FILE" ]; then
+    FILE_PROMPT=$(jq -r '.prompt // ""' "$RESUME_FILE" 2>/dev/null)
+    [ -n "$FILE_PROMPT" ] && SAVED_PROMPT="$FILE_PROMPT"
+fi
+
+# ── 4. Check if session is active and resume accordingly ──
+CLAUDE_PID=$(pgrep -af "claude.*$SESSION_ID" 2>/dev/null \
+    | grep -v "auto-resume" \
+    | awk '{print $1}' \
+    | head -1 || echo "")
+
+RESUME_EXIT=1
+
+if [ -n "$CLAUDE_PID" ]; then
+    # ── Session is ACTIVE ──
+    log "SESSION_ACTIVE session=$SESSION_ID pid=$CLAUDE_PID"
+
+    TMUX_PANE=$(find_tmux_pane "$CLAUDE_PID" 2>/dev/null || echo "")
+
+    kill_claude "$CLAUDE_PID"
+
+    if [ -n "$TMUX_PANE" ]; then
+        resume_via_tmux "$TMUX_PANE" "$SAVED_PROMPT" && RESUME_EXIT=0 || RESUME_EXIT=$?
+    else
+        resume_via_print "$SAVED_PROMPT" && RESUME_EXIT=0 || RESUME_EXIT=$?
+    fi
+else
+    # ── Session is INACTIVE ──
+    resume_via_print "$SAVED_PROMPT" && RESUME_EXIT=0 || RESUME_EXIT=$?
+fi
+
+# Archive to success/ or failed/
+if [ "$RESUME_EXIT" -eq 0 ]; then
+    archive_resume_file "success" "exit_code_0"
+else
+    log "RESUME_FAILED session=$SESSION_ID exit_code=$RESUME_EXIT"
+    archive_resume_file "failed" "resume_exit_code_${RESUME_EXIT}"
+fi
+
+exit $RESUME_EXIT

@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# UserPromptSubmit hook: speculatively schedule auto-resume when rate limit hits 100%.
+# Always exit 0 (allow prompt through). Client-side rate limiter blocks AFTER hooks.
+#
+# Logic:
+# - rate < 100%: do nothing
+# - rate 100% + my schedule exists: skip
+# - rate 100% + no schedule for me: create + spawn resume
+#
+# State: <project>/.claude/auto-resume/queued/<session-id>.json (delete to cancel)
+
+set -euo pipefail
+
+command -v jq >/dev/null 2>&1 || exit 0
+
+INPUT=$(cat)
+
+# 1. Read rate limit cache
+CACHE="$HOME/.claude/rate-limits.json"
+if [ ! -f "$CACHE" ]; then
+    if ! jq -r '.statusLine.command // ""' "$HOME/.claude/settings.json" 2>/dev/null | grep -q "statusline-rate-cache-wrapper"; then
+        echo "⚠️ Auto-resume: statusline not configured. Run /setup-auto-resume to set up." >&2
+    fi
+    exit 0
+fi
+DATA=$(jq '.' "$CACHE" 2>/dev/null) || exit 0
+
+# 2. Freshness check (skip if cache older than 5 minutes)
+LAST_UPDATED=$(echo "$DATA" | jq -r '.last_updated // 0')
+NOW=$(date +%s)
+[ $((NOW - LAST_UPDATED)) -gt 300 ] && exit 0
+
+# 3. Check rate limits
+FIVE_PCT=$(echo "$DATA" | jq -r '.rate_limits.five_hour.used_percentage // 0')
+FIVE_RESET=$(echo "$DATA" | jq -r '.rate_limits.five_hour.resets_at // 0')
+SEVEN_PCT=$(echo "$DATA" | jq -r '.rate_limits.seven_day.used_percentage // 0')
+SEVEN_RESET=$(echo "$DATA" | jq -r '.rate_limits.seven_day.resets_at // 0')
+
+FIVE_INT=$(printf '%.0f' "$FIVE_PCT" 2>/dev/null || echo 0)
+SEVEN_INT=$(printf '%.0f' "$SEVEN_PCT" 2>/dev/null || echo 0)
+
+# Rate not at limit — nothing to do
+[ "$FIVE_INT" -lt 100 ] && [ "$SEVEN_INT" -lt 100 ] && exit 0
+
+# 4. Identify session and project
+CWD=$(echo "$INPUT" | jq -r '.cwd // ""')
+[ -z "$CWD" ] && exit 0
+
+# Project-level opt-out
+CONF="$CWD/.claude/auto-resume.conf"
+if [ -f "$CONF" ] && grep -qi "^enabled=false" "$CONF" 2>/dev/null; then
+    exit 0
+fi
+
+SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // ""')
+[ -z "$SESSION_ID" ] && exit 0
+
+RESUME_DIR="$CWD/.claude/auto-resume"
+QUEUED_DIR="$RESUME_DIR/queued"
+RESUME_FILE="$QUEUED_DIR/${SESSION_ID}.json"
+
+# My schedule already exists — skip (if valid JSON with session_id)
+if [ -f "$RESUME_FILE" ]; then
+    EXISTING_SID=$(jq -r '.session_id // empty' "$RESUME_FILE" 2>/dev/null || echo "")
+    if [ -n "$EXISTING_SID" ]; then
+        EXISTING_TIME=$(jq -r '.resume_at_human // "unknown"' "$RESUME_FILE" 2>/dev/null || echo "unknown")
+        echo "⏳ Auto-resume already scheduled at $EXISTING_TIME" >&2
+        exit 0
+    fi
+    # File exists but corrupted/empty — will overwrite below
+fi
+
+# 5. Determine resume time (pick later of the two if both at 100%)
+if [ "$FIVE_INT" -ge 100 ] && [ "$SEVEN_INT" -ge 100 ]; then
+    [ "$SEVEN_RESET" -gt "$FIVE_RESET" ] && RESUME_AT=$SEVEN_RESET || RESUME_AT=$FIVE_RESET
+elif [ "$SEVEN_INT" -ge 100 ]; then
+    RESUME_AT=$SEVEN_RESET
+else
+    RESUME_AT=$FIVE_RESET
+fi
+
+# Too far in the future (>8 hours) — likely a data error, skip
+[ $((RESUME_AT - NOW)) -gt 28800 ] && exit 0
+
+# 6. Create schedule with user's actual prompt (safe JSON via jq)
+RESUME_DATE=$(date -d "@$RESUME_AT" -Iseconds 2>/dev/null || date -r "$RESUME_AT" -Iseconds 2>/dev/null || echo "$RESUME_AT")
+PROMPT=$(echo "$INPUT" | jq -r '.prompt // "If any agents failed in the previous task, do not perform their work directly — re-launch the same agents. If it was not an agent failure, continue with the remaining work."')
+
+mkdir -p "$QUEUED_DIR"
+jq -n \
+    --arg sid "$SESSION_ID" \
+    --argjson rat "$RESUME_AT" \
+    --arg rah "$RESUME_DATE" \
+    --argjson sat "$NOW" \
+    --arg p "$PROMPT" \
+    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, prompt: $p}' \
+    > "$RESUME_FILE.tmp" && mv "$RESUME_FILE.tmp" "$RESUME_FILE"
+
+# 7. Spawn resume process in background
+mkdir -p "$HOME/.claude/logs"
+nohup bash "$HOME/.claude/bin/claude-auto-resume.sh" "$SESSION_ID" "$RESUME_AT" "$CWD" \
+    >> "$HOME/.claude/logs/resume-${SESSION_ID}.log" 2>&1 &
+
+# 8. Log
+echo "$(date -Iseconds) SCHEDULED_BY_GUARD session=$SESSION_ID resume_at=$RESUME_DATE five=${FIVE_PCT}% seven=${SEVEN_PCT}% cwd=$CWD" \
+    >> "$HOME/.claude/logs/auto-resume-$(date +%Y-%m-%d).log"
+
+echo "⏳ Rate limit 100%. Auto-resume scheduled at $RESUME_DATE" >&2
+echo "   Cancel: rm $RESUME_FILE" >&2
+
+exit 0
