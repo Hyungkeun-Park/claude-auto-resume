@@ -110,14 +110,18 @@ if [ "$EVENT" = "Stop" ] && [ -f "$RESUME_FILE" ]; then
     CREATED_INT=$(printf '%.0f' "$CREATED_RATE" 2>/dev/null || echo 0)
 
     if [ "$CREATED_INT" -ge 100 ] && [ "$FILE_SOURCE" != "stop_failure" ]; then
-        # Turn completed at 100% + schedule was created at 100% → overuse confirmed
-        rm -f "$RESUME_FILE"
-        pkill -f "claude-auto-resume.sh.*$SESSION_ID" 2>/dev/null || true
-        rmdir "$QUEUED_DIR" 2>/dev/null || true
-        echo "$(date -Iseconds) OVERUSE_DETECTED session=$SESSION_ID source=$FILE_SOURCE created_at_rate=$CREATED_RATE" \
-            >> "$HOME/.claude/logs/auto-resume-$(date +%Y-%m-%d).log"
-        echo "✅ Overuse detected (turn completed at 100%). Schedule cancelled." >&2
-        exit 0
+        # Re-read source to close TOCTOU window (StopFailure may have locked it between reads)
+        FILE_SOURCE=$(jq -r '.source // ""' "$RESUME_FILE" 2>/dev/null || echo "")
+        if [ "$FILE_SOURCE" != "stop_failure" ]; then
+            # Turn completed at 100% + schedule was created at 100% → overuse confirmed
+            rm -f "$RESUME_FILE"
+            pkill -f "claude-auto-resume.sh.*$SESSION_ID" 2>/dev/null || true
+            rmdir "$QUEUED_DIR" 2>/dev/null || true
+            echo "$(date -Iseconds) OVERUSE_DETECTED session=$SESSION_ID source=$FILE_SOURCE created_at_rate=$CREATED_RATE" \
+                >> "$HOME/.claude/logs/auto-resume-$(date +%Y-%m-%d).log"
+            echo "✅ Overuse detected (turn completed at 100%). Schedule cancelled." >&2
+            exit 0
+        fi
     fi
 fi
 
