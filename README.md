@@ -290,7 +290,7 @@ bash ~/.claude/bin/test-rate-limit-simulation.sh
 
 ## Changelog
 
-### v2.0.0
+### v1.1.0
 
 **Overuse Detection & Daemon Safety**
 
