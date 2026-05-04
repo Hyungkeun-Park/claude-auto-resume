@@ -12,6 +12,7 @@
 # Cancel: rm <project>/.claude/auto-resume/queued/<session-id>.json
 
 set -euo pipefail
+umask 077
 
 command -v jq >/dev/null 2>&1 || exit 0
 
@@ -65,7 +66,7 @@ RESUME_FILE="$QUEUED_DIR/${SESSION_ID}.json"
 if [ -f "$RESUME_FILE" ]; then
     EXISTING_SID=$(jq -r '.session_id // empty' "$RESUME_FILE" 2>/dev/null || echo "")
     if [ -n "$EXISTING_SID" ]; then
-        jq '.source = "stop_failure"' "$RESUME_FILE" > "$RESUME_FILE.tmp" 2>/dev/null && mv "$RESUME_FILE.tmp" "$RESUME_FILE"
+        jq '.source = "stop_failure"' "$RESUME_FILE" > "$RESUME_FILE.tmp" 2>/dev/null && mv "$RESUME_FILE.tmp" "$RESUME_FILE" || rm -f "$RESUME_FILE.tmp"
         EXISTING_TIME=$(jq -r '.resume_at_human // "unknown"' "$RESUME_FILE" 2>/dev/null || echo "unknown")
         EXISTING_AT=$(jq -r '.resume_at // 0' "$RESUME_FILE" 2>/dev/null || echo "0")
         EXISTING_INT=$(printf '%.0f' "$EXISTING_AT" 2>/dev/null || echo 0)
@@ -86,10 +87,11 @@ else
     RESUME_AT=$FIVE_RESET
 fi
 
+[ "$RESUME_AT" -le "$NOW" ] && exit 0
 [ $((RESUME_AT - NOW)) -gt 28800 ] && exit 0
 
 # 6. Create schedule
-RESUME_DATE=$(date -d "@$RESUME_AT" -Iseconds 2>/dev/null || date -r "$RESUME_AT" -Iseconds 2>/dev/null || echo "$RESUME_AT")
+RESUME_DATE=$(date -d "@$RESUME_AT" +"%Y-%m-%dT%H:%M:%S%z" 2>/dev/null || date -r "$RESUME_AT" +"%Y-%m-%dT%H:%M:%S%z" 2>/dev/null || echo "$RESUME_AT")
 CURRENT_RATE=$(echo "$FIVE_PCT $SEVEN_PCT" | awk '{print ($1 > $2) ? $1 : $2}')
 
 mkdir -p "$QUEUED_DIR"
@@ -102,7 +104,7 @@ jq -n \
     --argjson car "$CURRENT_RATE" \
     --arg src "stop_failure" \
     '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, prompt: $p, created_at_rate: $car, source: $src}' \
-    > "$RESUME_FILE.tmp" && mv "$RESUME_FILE.tmp" "$RESUME_FILE"
+    > "$RESUME_FILE.tmp" && mv "$RESUME_FILE.tmp" "$RESUME_FILE" || rm -f "$RESUME_FILE.tmp"
 
 # 7. Spawn resume process
 mkdir -p "$HOME/.claude/logs"
@@ -110,7 +112,7 @@ nohup bash "$HOME/.claude/bin/claude-auto-resume.sh" "$SESSION_ID" "$RESUME_AT" 
     >> "$HOME/.claude/logs/resume-${SESSION_ID}.log" 2>&1 &
 
 # 8. Log + stderr
-echo "$(date -Iseconds) SCHEDULED_BY_FAILURE session=$SESSION_ID resume_at=$RESUME_DATE five=${FIVE_PCT}% seven=${SEVEN_PCT}% cwd=$CWD" \
+echo "$(date +"%Y-%m-%dT%H:%M:%S%z") SCHEDULED_BY_FAILURE session=$SESSION_ID resume_at=$RESUME_DATE five=${FIVE_PCT}% seven=${SEVEN_PCT}% cwd=$CWD" \
     >> "$HOME/.claude/logs/auto-resume-$(date +%Y-%m-%d).log"
 
 DELTA=$((RESUME_AT - NOW)); MINS=$((DELTA / 60)); SECS=$((DELTA % 60))

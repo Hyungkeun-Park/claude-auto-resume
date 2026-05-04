@@ -10,6 +10,7 @@
 # - Session active: skip (let hooks handle schedule cleanup)
 
 set -uo pipefail
+umask 077
 
 SESSION_ID="$1"
 TARGET_EPOCH="$2"
@@ -39,7 +40,7 @@ mkdir -p "$HOME/.claude/logs"
 
 log() {
     local LOG_FILE="$HOME/.claude/logs/auto-resume-$(date +%Y-%m-%d).log"
-    echo "$(date -Iseconds) $1" >> "$LOG_FILE"
+    echo "$(date +"%Y-%m-%dT%H:%M:%S%z") $1" >> "$LOG_FILE"
 }
 
 RESUME_ERROR_OUTPUT=""
@@ -69,7 +70,7 @@ archive_resume_file() {
     mkdir -p "$dest_dir"
 
     local completed_at
-    completed_at=$(date -Iseconds)
+    completed_at=$(date +"%Y-%m-%dT%H:%M:%S%z")
     jq --arg r "$result" --arg reason "$reason" --arg cat "$completed_at" \
         --arg err "$RESUME_ERROR_OUTPUT" \
         '. + {result: $r, reason: $reason, completed_at: $cat} | if $err != "" then . + {error_output: $err} else . end' \
@@ -122,44 +123,6 @@ kill_claude() {
     sleep 1
 }
 
-# Resume via tmux: reconnect in same pane + inject prompt
-resume_via_tmux() {
-    local pane=$1
-    local prompt=$2
-
-    log "TMUX_RESUME session=$SESSION_ID pane=$pane"
-
-    # Wait for shell prompt to appear after kill
-    sleep 2
-
-    # Send resume command
-    tmux send-keys -t "$pane" -l "claude --resume $SESSION_ID"
-    tmux send-keys -t "$pane" Enter
-
-    # Wait for claude ❯ prompt (up to 30 seconds)
-    local ready=false
-    for i in $(seq 1 30); do
-        if tmux capture-pane -t "$pane" -p 2>/dev/null | grep -q '❯'; then
-            ready=true
-            break
-        fi
-        sleep 1
-    done
-
-    if [ "$ready" != "true" ]; then
-        RESUME_ERROR_OUTPUT="tmux prompt '❯' not detected within 30s in pane $pane"
-        log "TMUX_TIMEOUT session=$SESSION_ID pane=$pane reason=prompt_not_detected"
-        return 1
-    fi
-
-    # Send the prompt (use -l for literal text, avoid key name interpretation)
-    tmux send-keys -t "$pane" -l "$prompt"
-    tmux send-keys -t "$pane" Enter
-
-    log "TMUX_RESUMED session=$SESSION_ID pane=$pane prompt=\"${prompt:0:80}\""
-    return 0
-}
-
 # Resume via background print mode
 resume_via_print() {
     local prompt=$1
@@ -188,17 +151,15 @@ resume_via_print() {
     return $exit_code
 }
 
-TARGET_HUMAN=$(date -d "@$TARGET_EPOCH" -Iseconds 2>/dev/null || date -r "$TARGET_EPOCH" -Iseconds 2>/dev/null || echo "$TARGET_EPOCH")
+TARGET_HUMAN=$(date -d "@$TARGET_EPOCH" +"%Y-%m-%dT%H:%M:%S%z" 2>/dev/null || date -r "$TARGET_EPOCH" +"%Y-%m-%dT%H:%M:%S%z" 2>/dev/null || echo "$TARGET_EPOCH")
 
 # ── 0. Kill any existing daemon for this session (prevent duplicates) ──
 for old_pid in $(pgrep -f "claude-auto-resume" 2>/dev/null || true); do
     [ "$old_pid" = "$$" ] && continue
-    if [ -f "/proc/$old_pid/cmdline" ]; then
-        OLD_CMD=$(tr '\0' ' ' < "/proc/$old_pid/cmdline" 2>/dev/null || true)
-        if echo "$OLD_CMD" | grep -q "$SESSION_ID"; then
-            log "KILL_OLD_DAEMON session=$SESSION_ID old_pid=$old_pid"
-            kill "$old_pid" 2>/dev/null || true
-        fi
+    OLD_CMD=$(ps -o args= -p "$old_pid" 2>/dev/null || true)
+    if [ -n "$OLD_CMD" ] && echo "$OLD_CMD" | grep -q "$SESSION_ID"; then
+        log "KILL_OLD_DAEMON session=$SESSION_ID old_pid=$old_pid"
+        kill "$old_pid" 2>/dev/null || true
     fi
 done
 
@@ -287,12 +248,10 @@ $SAVED_PROMPT"
 # ── 4. Check if session is active and resume accordingly ──
 CLAUDE_PID=""
 for pid in $(pgrep -x claude 2>/dev/null || true); do
-    if [ -f "/proc/$pid/cmdline" ]; then
-        CMDLINE=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)
-        if echo "$CMDLINE" | grep -q "$SESSION_ID" && ! echo "$CMDLINE" | grep -q "auto-resume"; then
-            CLAUDE_PID="$pid"
-            break
-        fi
+    CMDLINE=$(ps -o args= -p "$pid" 2>/dev/null || true)
+    if [ -n "$CMDLINE" ] && echo "$CMDLINE" | grep -q "$SESSION_ID" && ! echo "$CMDLINE" | grep -q "auto-resume"; then
+        CLAUDE_PID="$pid"
+        break
     fi
 done
 

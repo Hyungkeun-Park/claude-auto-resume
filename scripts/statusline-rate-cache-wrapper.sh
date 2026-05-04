@@ -6,6 +6,10 @@
 # Inner statusline command is read from ~/.claude/statusline-inner.conf
 # If the conf file doesn't exist or is empty, only caching is performed.
 
+set -uo pipefail
+umask 077
+# -e intentionally omitted: caching failures must not prevent inner statusline execution
+
 INPUT=$(cat)
 
 # ── 1. Cache rate limits (fast, always runs) ──
@@ -33,7 +37,7 @@ CONF="$HOME/.claude/statusline-inner.conf"
 if [ -f "$CONF" ]; then
     INNER_CMD=$(cat "$CONF")
     if [ -n "$INNER_CMD" ]; then
-        echo "$INPUT" | eval "$INNER_CMD"
+        echo "$INPUT" | $INNER_CMD
         exit $?
     fi
 fi

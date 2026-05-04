@@ -61,11 +61,13 @@ git clone https://github.com/Hyungkeun-Park-Nota/claude-auto-resume.git ~/.claud
 | `~/.claude/hooks/rate-limit-stop.sh` | Stop + SubagentStop hook |
 | `~/.claude/hooks/rate-limit-stop-failure.sh` | StopFailure hook (API error fallback) |
 | `~/.claude/hooks/rate-limit-prompt-guard.sh` | UserPromptSubmit hook (speculative scheduling) |
+| `~/.claude/hooks/rate-limit-subagent-start.sh` | SubagentStart hook (marker tracking for G16 fix) |
 | `~/.claude/bin/claude-auto-resume.sh` | Resume daemon |
 | `~/.claude/bin/statusline-rate-cache-wrapper.sh` | Rate limit data cache |
 | `~/.claude/bin/auto-resume-help.sh` | Help output |
 | `~/.claude/bin/auto-resume-status.sh` | Status dashboard |
 | `~/.claude/bin/test-rate-limit-simulation.sh` | Hook simulation test suite |
+| `~/.claude/bin/test-resume-daemon.sh` | Daemon unit test suite |
 
 ## Overuse Detection
 
@@ -251,7 +253,7 @@ All messages include the state file path and cancel command.
 bash ~/.claude/bin/test-rate-limit-simulation.sh
 ```
 
-56 test cases, 172 assertions covering:
+66 test cases, 214 assertions covering:
 
 | Category | Tests | Coverage |
 |----------|-------|----------|
@@ -265,6 +267,7 @@ bash ~/.claude/bin/test-rate-limit-simulation.sh
 | Full lifecycle | T37-T38 | Guard → StopFailure lock → Stop confirm → recovery |
 | Corrupted files | T39-T43 | Invalid JSON, empty files, directory cleanup |
 | **Overuse detection** | **T44-T56** | **Overuse via UPS/Stop, SubagentStop exempt, StopFailure lock, field validation, invalid session ID** |
+| **Subagent marker (G16)** | **T57-T66** | **Marker create/delete, overuse skip, stale cache cleanup, full G16 lifecycle, validation** |
 
 ## Comparison with Existing Tools
 
@@ -286,9 +289,28 @@ bash ~/.claude/bin/test-rate-limit-simulation.sh
 | Document | Description |
 |----------|-------------|
 | [docs/spec.md](docs/spec.md) | Full technical spec — hook lifecycle, case analysis, design decisions |
-| [docs/gotchas.md](docs/gotchas.md) | Edge cases and non-obvious behaviors discovered during development |
+| [docs/gotchas.md](docs/gotchas.md) | Edge cases index — individual entries in [docs/gotchas/](docs/gotchas/) |
 
 ## Changelog
+
+### v1.2.0
+
+**Subagent Marker Tracking (G16 Fix) & Hardening**
+
+- **G16 fix — subagent rate limit false positive**: SubagentStart hook creates marker files; Stop checks surviving markers to skip overuse detection when rate-limited subagents haven't fired SubagentStop yet
+- **New hook**: `rate-limit-subagent-start.sh` — creates `subagents/<session_id>/<agent_id>` marker on SubagentStart
+- **Stop hook restructure**: CWD/SESSION_ID extraction moved before cache check so SubagentStop marker deletion works even with stale cache
+- **RESUME_AT=0 guard**: All hooks reject resume times in the past or zero (prevents uncontrolled immediate resume)
+- **eval removal**: Statusline wrapper replaced `eval "$INNER_CMD"` with `$INNER_CMD` (command injection hardening)
+- **macOS portability**: `/proc/$pid/cmdline` replaced with `ps -o args=` in daemon (both duplicate detection and active session detection)
+- **umask 077**: All hooks and daemon set restrictive file permissions
+- **POSIX date**: Replaced `date -Iseconds` with portable `date +"%Y-%m-%dT%H:%M:%S%z"`
+- **Dead code removal**: `resume_via_tmux()` removed from daemon (35 lines, unused since v1.1.0)
+- **created_at_rate update**: Stop hook now updates `created_at_rate` on schedule update (was frozen at creation value)
+- **pkill → targeted kill**: Replaced broad `pkill -f` with `pgrep` + `ps -o args=` + session-specific `kill`
+- **Atomic write cleanup**: All jq write paths clean up `.tmp` files on failure
+- **Gotchas split**: `docs/gotchas.md` → individual files in `docs/gotchas/` for easier reference
+- **Test suite**: 56 → 66 tests, 172 → 214 assertions (10 new subagent marker lifecycle tests T57-T66)
 
 ### v1.1.0
 
@@ -299,7 +321,7 @@ bash ~/.claude/bin/test-rate-limit-simulation.sh
 - **StopFailure source lock**: `source: stop_failure` protects genuine API errors from overuse classification
 - **TOCTOU re-read guard**: Re-verifies source before deletion to prevent race conditions
 - **Active session skip**: Daemon skips (not kills) active sessions
-- **Process detection**: `/proc/$pid/cmdline` inspection replaces `pgrep -af`
+- **Process detection**: `ps -o args=` inspection replaces `pgrep -af` (macOS/Linux portable)
 - **Resume timeout**: `timeout 3600` prevents unbounded blocking
 - **Log cleanup**: 7-day resume logs, 30-day event logs, 50-file archive cap
 - **Resume metadata**: `[Auto-resumed after Nm wait]` prefix in resumed sessions

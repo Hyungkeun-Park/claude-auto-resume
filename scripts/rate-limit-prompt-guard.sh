@@ -10,6 +10,7 @@
 # State: <project>/.claude/auto-resume/queued/<session-id>.json (delete to cancel)
 
 set -euo pipefail
+umask 077
 
 command -v jq >/dev/null 2>&1 || exit 0
 
@@ -83,11 +84,13 @@ else
     RESUME_AT=$FIVE_RESET
 fi
 
+# Resume time in the past or zero — bad data, skip
+[ "$RESUME_AT" -le "$NOW" ] && exit 0
 # Too far in the future (>8 hours) — likely a data error, skip
 [ $((RESUME_AT - NOW)) -gt 28800 ] && exit 0
 
 # 6. Create schedule with user's actual prompt (safe JSON via jq)
-RESUME_DATE=$(date -d "@$RESUME_AT" -Iseconds 2>/dev/null || date -r "$RESUME_AT" -Iseconds 2>/dev/null || echo "$RESUME_AT")
+RESUME_DATE=$(date -d "@$RESUME_AT" +"%Y-%m-%dT%H:%M:%S%z" 2>/dev/null || date -r "$RESUME_AT" +"%Y-%m-%dT%H:%M:%S%z" 2>/dev/null || echo "$RESUME_AT")
 PROMPT=$(echo "$INPUT" | jq -r '.prompt // "If any agents failed in the previous task, do not perform their work directly — re-launch the same agents. If it was not an agent failure, continue with the remaining work."')
 
 CURRENT_RATE=$(echo "$FIVE_PCT $SEVEN_PCT" | awk '{print ($1 > $2) ? $1 : $2}')
@@ -102,7 +105,7 @@ jq -n \
     --argjson car "$CURRENT_RATE" \
     --arg src "user_prompt" \
     '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, prompt: $p, created_at_rate: $car, source: $src}' \
-    > "$RESUME_FILE.tmp" && mv "$RESUME_FILE.tmp" "$RESUME_FILE"
+    > "$RESUME_FILE.tmp" && mv "$RESUME_FILE.tmp" "$RESUME_FILE" || rm -f "$RESUME_FILE.tmp"
 
 # 7. Spawn resume process in background
 mkdir -p "$HOME/.claude/logs"
@@ -110,7 +113,7 @@ nohup bash "$HOME/.claude/bin/claude-auto-resume.sh" "$SESSION_ID" "$RESUME_AT" 
     >> "$HOME/.claude/logs/resume-${SESSION_ID}.log" 2>&1 &
 
 # 8. Log
-echo "$(date -Iseconds) SCHEDULED_BY_GUARD session=$SESSION_ID resume_at=$RESUME_DATE five=${FIVE_PCT}% seven=${SEVEN_PCT}% cwd=$CWD" \
+echo "$(date +"%Y-%m-%dT%H:%M:%S%z") SCHEDULED_BY_GUARD session=$SESSION_ID resume_at=$RESUME_DATE five=${FIVE_PCT}% seven=${SEVEN_PCT}% cwd=$CWD" \
     >> "$HOME/.claude/logs/auto-resume-$(date +%Y-%m-%d).log"
 
 DELTA=$((RESUME_AT - NOW)); MINS=$((DELTA / 60)); SECS=$((DELTA % 60))
