@@ -281,6 +281,13 @@ bash ~/.claude/bin/test-rate-limit-simulation.sh
 | Project opt-out | No | No | Per-project conf |
 | tmux required | Yes | No | No (headless default) |
 
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [docs/spec.md](docs/spec.md) | Full technical spec — hook lifecycle, case analysis, design decisions |
+| [docs/gotchas.md](docs/gotchas.md) | Edge cases and non-obvious behaviors discovered during development |
+
 ## Changelog
 
 ### v2.0.0
