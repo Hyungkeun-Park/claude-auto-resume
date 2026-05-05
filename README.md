@@ -327,70 +327,7 @@ tests/
 
 ## Changelog
 
-### v1.3.0
-
-**Modular Test Suite, Security Hardening & Installer**
-
-- **Test architecture overhaul**: Monolithic 1434-line test file split into 16 independent suites with shared framework (`tests/test-framework.sh`) and runner (`tests/run-tests.sh` with `--smoke`, `--contract` modes)
-- **Contract tests (TC01-TC12)**: Validate Claude Code hook input schema, statusline cache schema, settings.json structure, and `--resume` CLI flag — designed to break first when Claude Code updates change the interface
-- **Daemon tests (TD01-TD12)**: Cover `find_claude_bin()` fallback paths, `archive_resume_file()` lifecycle, `cleanup_old_logs()`, session ID validation, and argument parsing — previously 0% tested
-- **Security tests (TS01-TS10)**: Symlink attack prevention, path traversal rejection, injection via session/agent IDs, large/nested JSON handling, concurrent fire integrity
-- **Symlink hardening**: All state file write paths now check for and remove symlinks before writing (prevents arbitrary file overwrite)
-- **Statusline command hardening**: `$INNER_CMD` execution changed from unquoted word-splitting to `bash -c "$INNER_CMD"` (prevents injection via `statusline-inner.conf`)
-- **Standalone installer**: `install.sh` with `--upgrade` (version comparison), `--uninstall` (clean removal), `--check` (health verification), safe `settings.json` hook merging
-- **VERSION file**: Machine-readable version tracking at repo root and installed location
-- **Timestamped filenames**: State files use `yymmdd-hhmmss-<session-id>.json` format with backward-compatible lookup via `lib-resume-file.sh`
-- **Test suite**: 96 → 130 tests, 313 → 379+ assertions (34 new tests across 3 new categories)
-
-### v1.2.1
-
-**Stale Cache Freshness Gate Fix (G17)**
-
-- **G17 fix — stale cache blocks scheduling at 100%**: Freshness check was unconditionally exiting on stale cache (>5min), even when cached rate was ≥100%. Since rate only resets downward, stale cache at ≥100% is valid for scheduling. Combined freshness+rate gate: exit only when stale AND rate < 100%
-- **All three hooks fixed**: `rate-limit-prompt-guard.sh`, `rate-limit-stop.sh`, `rate-limit-stop-failure.sh` — rate data now read before freshness gate
-- **Overuse→block transition**: When overuse turns off and client blocks, statusline stops updating but schedule is now correctly created from stale cache at ≥100%
-- **Test suite**: 66 → 96 tests, 214 → 313 assertions (T05/T11/T17 updated, T67-T72 stale cache gate, T73-T82 input robustness, T83-T92 error recovery, T93-T96 hook registration compatibility)
-
-### v1.2.0
-
-**Subagent Marker Tracking (G16 Fix) & Hardening**
-
-- **G16 fix — subagent rate limit false positive**: SubagentStart hook creates marker files; Stop checks surviving markers to skip overuse detection when rate-limited subagents haven't fired SubagentStop yet
-- **New hook**: `rate-limit-subagent-start.sh` — creates `subagents/<session_id>/<agent_id>` marker on SubagentStart
-- **Stop hook restructure**: CWD/SESSION_ID extraction moved before cache check so SubagentStop marker deletion works even with stale cache
-- **RESUME_AT=0 guard**: All hooks reject resume times in the past or zero (prevents uncontrolled immediate resume)
-- **eval removal**: Statusline wrapper replaced `eval "$INNER_CMD"` with `$INNER_CMD` (command injection hardening)
-- **macOS portability**: `/proc/$pid/cmdline` replaced with `ps -o args=` in daemon (both duplicate detection and active session detection)
-- **umask 077**: All hooks and daemon set restrictive file permissions
-- **POSIX date**: Replaced `date -Iseconds` with portable `date +"%Y-%m-%dT%H:%M:%S%z"`
-- **Dead code removal**: `resume_via_tmux()` removed from daemon (35 lines, unused since v1.1.0)
-- **created_at_rate update**: Stop hook now updates `created_at_rate` on schedule update (was frozen at creation value)
-- **pkill → targeted kill**: Replaced broad `pkill -f` with `pgrep` + `ps -o args=` + session-specific `kill`
-- **Atomic write cleanup**: All jq write paths clean up `.tmp` files on failure
-- **Gotchas split**: `docs/gotchas.md` → individual files in `docs/gotchas/` for easier reference
-- **Test suite**: 56 → 66 tests, 172 → 214 assertions (10 new subagent marker lifecycle tests T57-T66)
-
-### v1.1.0
-
-**Overuse Detection & Daemon Safety**
-
-- **Overuse detection**: `created_at_rate` + `source` fields in session.json to detect and cancel unnecessary schedules when "additional usage" is active
-- **SubagentStop exception**: Parallel agent completion exempt from overuse detection
-- **StopFailure source lock**: `source: stop_failure` protects genuine API errors from overuse classification
-- **TOCTOU re-read guard**: Re-verifies source before deletion to prevent race conditions
-- **Active session skip**: Daemon skips (not kills) active sessions
-- **Process detection**: `ps -o args=` inspection replaces `pgrep -af` (macOS/Linux portable)
-- **Resume timeout**: `timeout 3600` prevents unbounded blocking
-- **Log cleanup**: 7-day resume logs, 30-day event logs, 50-file archive cap
-- **Resume metadata**: `[Auto-resumed after Nm wait]` prefix in resumed sessions
-- **Safe JSON**: `jq -n --argjson` in statusline wrapper replaces string interpolation
-- **Explicit PATH**: `find_claude_bin()` replaces shell profile sourcing
-- **User-visible logging**: stderr messages with time delta, state path, cancel command
-- **Test suite**: 56 tests, 172 assertions (13 new overuse detection tests)
-
-### v1.0.0
-
-Initial release — hook-based auto-resume with per-session state files, subagent support, and tmux/headless resume.
+See [CHANGELOG.md](CHANGELOG.md) for the full release history.
 
 ## License
 

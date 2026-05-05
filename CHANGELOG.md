@@ -1,0 +1,77 @@
+# Changelog
+
+All notable changes to this project are documented in this file.
+Format follows [Keep a Changelog](https://keepachangelog.com/).
+
+## [1.3.0] - 2026-05-05
+
+### Added
+- Modular test architecture: 16 independent suites with shared framework (`tests/test-framework.sh`) and runner (`tests/run-tests.sh` with `--smoke`, `--contract` modes)
+- Contract tests (TC01-TC12): validate Claude Code hook input schema, statusline cache schema, settings.json structure, and `--resume` CLI flag
+- Daemon tests (TD01-TD12): cover `find_claude_bin()` fallback paths, `archive_resume_file()` lifecycle, `cleanup_old_logs()`, session ID validation
+- Security tests (TS01-TS10): symlink attack prevention, path traversal rejection, injection via session/agent IDs, large JSON handling, concurrent fire integrity
+- Standalone installer (`install.sh`) with `--upgrade`, `--uninstall`, `--check` modes and safe `settings.json` hook merging
+- `VERSION` file for machine-readable version tracking
+- Timestamped state filenames (`yymmdd-hhmmss-<session-id>.json`) with backward-compatible lookup via `lib-resume-file.sh`
+
+### Fixed
+- Symlink hardening: all state file write paths check for and remove symlinks before writing
+- Statusline command injection: `$INNER_CMD` execution changed from unquoted word-splitting to `bash -c "$INNER_CMD"`
+
+### Changed
+- Test suite: 96 → 130 tests, 313 → 379+ assertions
+
+## [1.2.1] - 2026-05-04
+
+### Fixed
+- **G17**: Stale cache (>5min) was unconditionally blocking scheduling even when cached rate was ≥100%. Since rate only resets downward, stale cache at ≥100% is valid for scheduling. Combined freshness+rate gate now exits only when stale AND rate < 100%.
+- All three hooks fixed: `rate-limit-prompt-guard.sh`, `rate-limit-stop.sh`, `rate-limit-stop-failure.sh`
+
+### Changed
+- Test suite: 66 → 96 tests, 214 → 313 assertions
+
+## [1.2.0] - 2026-05-03
+
+### Added
+- **G16 fix**: SubagentStart hook creates marker files; Stop checks surviving markers to skip overuse detection when rate-limited subagents haven't fired SubagentStop yet
+- New hook: `rate-limit-subagent-start.sh`
+- RESUME_AT=0 guard: all hooks reject resume times in the past or zero
+- `umask 077` in all hooks and daemon
+
+### Fixed
+- `eval` removal: statusline wrapper replaced `eval "$INNER_CMD"` with `$INNER_CMD`
+- macOS portability: `/proc/$pid/cmdline` replaced with `ps -o args=`
+- POSIX date: replaced `date -Iseconds` with portable `date +"%Y-%m-%dT%H:%M:%S%z"`
+- Atomic write cleanup: all jq write paths clean up `.tmp` files on failure
+- `pkill` → targeted `pgrep` + session-specific `kill`
+
+### Removed
+- `resume_via_tmux()` (35 lines, unused since v1.1.0)
+
+### Changed
+- Stop hook restructure: CWD/SESSION_ID extraction moved before cache check
+- `created_at_rate` now updated on schedule update (was frozen at creation value)
+- Gotchas split: `docs/gotchas.md` → individual files in `docs/gotchas/`
+- Test suite: 56 → 66 tests, 172 → 214 assertions
+
+## [1.1.0] - 2026-05-02
+
+### Added
+- Overuse detection via `created_at_rate` + `source` fields
+- SubagentStop exception: parallel agent completion exempt from overuse detection
+- StopFailure source lock: `source: stop_failure` protects genuine API errors
+- TOCTOU re-read guard before overuse deletion
+- Active session skip (daemon skips instead of killing)
+- Resume timeout: `timeout 3600` prevents unbounded blocking
+- Log cleanup: 7-day resume logs, 30-day event logs, 50-file archive cap
+- Resume metadata: `[Auto-resumed after Nm wait]` prefix
+- Safe JSON via `jq -n --argjson` in statusline wrapper
+- `find_claude_bin()` replaces shell profile sourcing
+- User-visible stderr messages with time delta, state path, cancel command
+
+### Changed
+- Test suite: 56 tests, 172 assertions (13 new overuse detection tests)
+
+## [1.0.0] - 2026-05-01
+
+Initial release — hook-based auto-resume with per-session state files, subagent support, and headless resume.
