@@ -10,7 +10,7 @@ Rate limit 100% → hook saves session state → daemon waits for recovery → s
 
 1. **Statusline wrapper** caches rate limit data to `~/.claude/rate-limits.json` every turn
 2. **Hook scripts** detect rate limit 100% on Stop/StopFailure/SubagentStop/UserPromptSubmit events
-3. **State file** is created at `<project>/.claude/auto-resume/queued/<session-id>.json`
+3. **State file** is created at `<project>/.claude/auto-resume/queued/<yymmdd-hhmmss>-<session-id>.json`
 4. **Daemon** polls until reset time, verifies rate recovery, then resumes the session
 5. **Resume** via `claude -p --resume <session-id>` (headless mode)
 
@@ -36,12 +36,18 @@ Rate limit 100% → hook saves session state → daemon waits for recovery → s
 ## Installation
 
 ```bash
-# Clone to global skills directory
-git clone https://github.com/Hyungkeun-Park-Nota/claude-auto-resume.git ~/.claude/skills/auto-resume
+# Option 1: Standalone installer (recommended)
+git clone https://github.com/Hyungkeun-Park/claude-auto-resume.git
+cd claude-auto-resume
+bash install.sh
 
+# Option 2: As Claude Code skill
+git clone https://github.com/Hyungkeun-Park/claude-auto-resume.git ~/.claude/skills/auto-resume
 # Then in any Claude Code session:
 /auto-resume setup
 ```
+
+The installer copies scripts, merges hooks into `settings.json`, and configures the statusline wrapper. Use `bash install.sh --check` to verify, `--upgrade` to update, or `--uninstall` to remove.
 
 ## Commands
 
@@ -109,11 +115,11 @@ Overuse → hard limit transition:
 ```
 <project>/.claude/auto-resume/
 ├── queued/        ← pending resume schedules
-│   └── <session-id>.json
+│   └── <yymmdd-hhmmss>-<session-id>.json
 ├── success/       ← completed resumes (includes completed_at)
-│   └── <session-id>.json
+│   └── <yymmdd-hhmmss>-<session-id>.json
 └── failed/        ← failed resumes (includes error_output)
-    └── <session-id>.json
+    └── <yymmdd-hhmmss>-<session-id>.json
 ```
 
 ### State File Format
@@ -250,28 +256,50 @@ All messages include the state file path and cancel command.
 ## Testing
 
 ```bash
-bash ~/.claude/bin/test-rate-limit-simulation.sh
+# Modular test suite (recommended)
+bash tests/run-tests.sh              # all 16 suites
+bash tests/run-tests.sh --smoke      # quick health check (4 core suites)
+bash tests/run-tests.sh --contract   # Claude Code compatibility checks only
+bash tests/run-tests.sh stop-hook overuse  # specific suites
+
+# Legacy monolithic test (backward compatible)
+bash scripts/test-rate-limit-simulation.sh
 ```
 
-96 test cases, 313 assertions covering:
+16 test suites, 130 test cases, 379+ assertions:
 
-| Category | Tests | Coverage |
-|----------|-------|----------|
+| Suite | Tests | Coverage |
+|-------|-------|----------|
 | Stop hook basic | T01-T06 | Rate states, stale/missing cache |
 | Prompt guard basic | T07-T12 | Scheduling, dedup, edge cases |
 | StopFailure basic | T13-T17 | API error fallback, source lock |
 | Multi-session | T18-T20 | Coexistence, selective cleanup |
 | Special characters | T21-T26 | Quotes, backslash, newline, Korean, JSON |
-| Both limits at 100% | T27-T29 | Reset time selection |
-| Edge cases | T30-T36 | 8h limit, rounding, empty input, atomic write |
-| Full lifecycle | T37-T38 | Guard → StopFailure lock → Stop confirm → recovery |
-| Corrupted files | T39-T43 | Invalid JSON, empty files, directory cleanup |
-| **Overuse detection** | **T44-T56** | **Overuse via UPS/Stop, SubagentStop exempt, StopFailure lock, field validation, invalid session ID** |
-| **Subagent marker (G16)** | **T57-T66** | **Marker create/delete, overuse skip, stale cache cleanup, full G16 lifecycle, validation** |
-| **Stale cache + rate gate (G17)** | **T67-T72** | **Stale at low rate skips, stale at 100% schedules, overuse→block transition, prompt preservation** |
-| Hook input robustness | T73-T82 | Extra/missing/null fields, cache schema changes, rapid fires, unknown events |
-| Error recovery | T83-T92 | Empty/non-JSON cache, zero/past reset, long prompt, CWD isolation, rate boundary |
+| Edge cases | T27-T35 | 8h limit, rounding, empty input, both limits |
+| Lifecycle | T36-T43 | Atomic write, full lifecycle, corrupted files, dir cleanup |
+| Overuse detection | T44-T56 | Overuse via UPS/Stop, SubagentStop exempt, StopFailure lock |
+| Subagent marker (G16) | T57-T66 | Marker lifecycle, overuse skip, stale cache cleanup |
+| Stale cache + rate gate (G17) | T67-T72 | Stale at 100% schedules, overuse→block transition |
+| Forward compatibility | T73-T82 | Extra/missing/null fields, cache schema changes, rapid fires |
+| Error recovery | T83-T92 | Empty/non-JSON cache, zero/past reset, long prompt, CWD isolation |
 | Hook registration | T93-T96 | Script existence, shebang, settings.json wiring, safety guards |
+| **Contract** | **TC01-TC12** | **Hook input schema, statusline schema, settings structure, CLI --resume flag** |
+| **Daemon** | **TD01-TD12** | **find_claude_bin() fallbacks, archive lifecycle, cleanup, arg validation** |
+| **Security** | **TS01-TS10** | **Injection, symlink, path traversal, large input, concurrent fires** |
+
+### Test Architecture
+
+```
+tests/
+├── test-framework.sh      # Shared assertions, helpers, environment isolation
+├── run-tests.sh            # Runner with --smoke, --contract modes
+├── test-stop-hook.sh       # T01-T06
+├── test-prompt-guard.sh    # T07-T12
+├── ...                     # 13 more hook logic suites
+├── test-contract.sh        # Claude Code API contract validation
+├── test-daemon.sh          # Resume daemon unit tests
+└── test-security.sh        # Security hardening verification
+```
 
 ## Comparison with Existing Tools
 
@@ -294,8 +322,25 @@ bash ~/.claude/bin/test-rate-limit-simulation.sh
 |----------|-------------|
 | [docs/spec.md](docs/spec.md) | Full technical spec — hook lifecycle, case analysis, design decisions |
 | [docs/gotchas.md](docs/gotchas.md) | Edge cases index — individual entries in [docs/gotchas/](docs/gotchas/) |
+| [tests/test-framework.sh](tests/test-framework.sh) | Shared test framework — assertions, helpers, environment isolation |
+| [install.sh](install.sh) | Standalone installer — `--upgrade`, `--uninstall`, `--check` |
 
 ## Changelog
+
+### v1.3.0
+
+**Modular Test Suite, Security Hardening & Installer**
+
+- **Test architecture overhaul**: Monolithic 1434-line test file split into 16 independent suites with shared framework (`tests/test-framework.sh`) and runner (`tests/run-tests.sh` with `--smoke`, `--contract` modes)
+- **Contract tests (TC01-TC12)**: Validate Claude Code hook input schema, statusline cache schema, settings.json structure, and `--resume` CLI flag — designed to break first when Claude Code updates change the interface
+- **Daemon tests (TD01-TD12)**: Cover `find_claude_bin()` fallback paths, `archive_resume_file()` lifecycle, `cleanup_old_logs()`, session ID validation, and argument parsing — previously 0% tested
+- **Security tests (TS01-TS10)**: Symlink attack prevention, path traversal rejection, injection via session/agent IDs, large/nested JSON handling, concurrent fire integrity
+- **Symlink hardening**: All state file write paths now check for and remove symlinks before writing (prevents arbitrary file overwrite)
+- **Statusline command hardening**: `$INNER_CMD` execution changed from unquoted word-splitting to `bash -c "$INNER_CMD"` (prevents injection via `statusline-inner.conf`)
+- **Standalone installer**: `install.sh` with `--upgrade` (version comparison), `--uninstall` (clean removal), `--check` (health verification), safe `settings.json` hook merging
+- **VERSION file**: Machine-readable version tracking at repo root and installed location
+- **Timestamped filenames**: State files use `yymmdd-hhmmss-<session-id>.json` format with backward-compatible lookup via `lib-resume-file.sh`
+- **Test suite**: 96 → 130 tests, 313 → 379+ assertions (34 new tests across 3 new categories)
 
 ### v1.2.1
 
