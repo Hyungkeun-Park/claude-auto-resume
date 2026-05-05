@@ -261,8 +261,8 @@ EXIT=$(run_stop_hook "$(make_hook_input "sess-002")")
 assert_exit_code "$EXIT" 0
 assert_file_exists "$(resume_file_for sess-002)"
 assert_json_field "$(resume_file_for sess-002)" '.session_id' "sess-002"
-assert_json_field "$(resume_file_for sess-002)" '.prompt' "$FIXED_PROMPT"
-assert_stderr_contains "$TEST_DIR/stderr_out" "Auto-resume confirmed"
+assert_json_field "$(resume_file_for sess-002)" '.scheduled_prompt' "$FIXED_PROMPT"
+assert_stderr_contains "$TEST_DIR/stderr_out" "Auto-resume scheduled"
 
 # ─── T03: Stop hook, my file exists → update prompt and resume_at ───────────
 setup_test "T03_stop_update_existing"
@@ -274,8 +274,8 @@ jq -n --arg sid "sess-003" --argjson rat "$FUTURE" --arg rah "$FUTURE_DATE" \
     > "$(resume_file_for sess-003)"
 EXIT=$(run_stop_hook "$(make_hook_input "sess-003")")
 assert_exit_code "$EXIT" 0
-assert_json_field "$(resume_file_for sess-003)" '.prompt' "$FIXED_PROMPT"
-assert_stderr_contains "$TEST_DIR/stderr_out" "Auto-resume confirmed"
+assert_json_field "$(resume_file_for sess-003)" '.scheduled_prompt' "$FIXED_PROMPT"
+assert_stderr_contains "$TEST_DIR/stderr_out" "Auto-resume scheduled"
 
 # ─── T04: Stop hook, rate < 100% → clear MY file only ──────────────────────
 setup_test "T04_stop_clear_own_file"
@@ -647,8 +647,8 @@ assert_json_field "$(resume_file_for sess-037)" '.source' "stop_failure"
 # Stop confirms (sees source=stop_failure → skips overuse, updates prompt)
 EXIT=$(run_stop_hook "$(make_hook_input "sess-037")")
 assert_exit_code "$EXIT" 0
-assert_json_field "$(resume_file_for sess-037)" '.prompt' "$FIXED_PROMPT"
-assert_stderr_contains "$TEST_DIR/stderr_out" "Auto-resume confirmed"
+assert_json_field "$(resume_file_for sess-037)" '.scheduled_prompt' "$FIXED_PROMPT"
+assert_stderr_contains "$TEST_DIR/stderr_out" "Auto-resume scheduled"
 
 # Rate recovers
 write_cache 50 30
@@ -786,7 +786,7 @@ jq -n --arg sid "sess-046" --argjson rat "$FUTURE" --arg rah "$FUTURE_DATE" \
 EXIT=$(run_stop_hook "$(make_hook_input "sess-046" "$TEST_CWD" "" "SubagentStop")")
 assert_exit_code "$EXIT" 0
 assert_file_exists "$(resume_file_for sess-046)"
-assert_stderr_contains "$TEST_DIR/stderr_out" "Auto-resume confirmed"
+assert_stderr_contains "$TEST_DIR/stderr_out" "Auto-resume scheduled"
 
 # ─── T47: StopFailure locks source → Stop cannot delete ────────────────────
 setup_test "T47_stop_failure_locks_source"
@@ -802,7 +802,7 @@ assert_json_field "$(resume_file_for sess-047)" '.source' "stop_failure"
 EXIT=$(run_stop_hook "$(make_hook_input "sess-047")")
 assert_exit_code "$EXIT" 0
 assert_file_exists "$(resume_file_for sess-047)"
-assert_stderr_contains "$TEST_DIR/stderr_out" "Auto-resume confirmed"
+assert_stderr_contains "$TEST_DIR/stderr_out" "Auto-resume scheduled"
 assert_stderr_not_contains "$TEST_DIR/stderr_out" "Overuse detected"
 
 # ─── T48: Rate recovery clears overuse-created file + logs OVERUSE_CLEARED ──
@@ -947,7 +947,7 @@ EXIT=$(run_stop_hook "$(make_hook_input "sess-059")")
 assert_exit_code "$EXIT" 0
 assert_file_exists "$(resume_file_for sess-059)"
 assert_stderr_not_contains "$TEST_DIR/stderr_out" "Overuse detected"
-assert_stderr_contains "$TEST_DIR/stderr_out" "Auto-resume confirmed"
+assert_stderr_contains "$TEST_DIR/stderr_out" "Auto-resume scheduled"
 assert_log_contains "OVERUSE_SKIPPED_SUBAGENT"
 
 # ─── T60: Stop applies overuse when no markers (existing behavior) ──────────
@@ -1277,7 +1277,7 @@ LONG_PROMPT=$(python3 -c "print('A' * 10000)")
 EXIT=$(run_prompt_guard "$(make_hook_input "sess-088" "$TEST_CWD" "$LONG_PROMPT")")
 assert_exit_code "$EXIT" 0
 assert_file_exists "$(resume_file_for sess-088)"
-STORED_LEN=$(jq -r '.prompt | length' "$(resume_file_for sess-088)" 2>/dev/null)
+STORED_LEN=$(jq -r '.scheduled_prompt | length' "$(resume_file_for sess-088)" 2>/dev/null)
 TOTAL=$((TOTAL + 1))
 if [ "$STORED_LEN" -eq 10000 ]; then PASS=$((PASS + 1)); else
     FAIL=$((FAIL + 1)); echo -e "  ${RED}FAIL${NC}: prompt length = $STORED_LEN (expected 10000)"

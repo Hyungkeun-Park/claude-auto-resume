@@ -272,7 +272,7 @@ done
 RESUME_EXIT=1
 
 if [ -n "$CLAUDE_PID" ]; then
-    # ── Session is ACTIVE — do not kill, just skip ──
+    # ── Session is ACTIVE — user revived it manually, do not interfere ──
     log "SKIPPED session=$SESSION_ID reason=session_still_active pid=$CLAUDE_PID"
     archive_resume_file "skipped" "session_still_active"
     exit 0

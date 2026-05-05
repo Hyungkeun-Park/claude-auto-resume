@@ -3,6 +3,19 @@
 All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.1.0] - 2026-05-05
+
+### Added
+- **Session kill on scheduling** — when rate limit triggers auto-resume, the idle Claude process is killed after 60s so the resume daemon can start a fresh session
+- User-facing message in Claude UI: "Session will terminate in 60s for scheduled resume" with cancel instructions
+- Safety guard: if user deletes the resume file within 60s, the kill is cancelled (allows manual overuse usage)
+- Safety guard: if the session is still active at resume time (user revived it), resume is skipped
+
+### Changed
+- Stop/StopFailure hooks now call `schedule_session_kill()` after scheduling
+- Hook messages updated: "confirmed" → "scheduled", added termination notice and skip note
+- Test assertions updated for new field names and messages
+
 ## [1.0.0] - 2026-05-05
 
 ### Added

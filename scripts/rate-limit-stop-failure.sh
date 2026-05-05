@@ -20,6 +20,21 @@ source "$_LIB"
 
 command -v jq >/dev/null 2>&1 || exit 0
 
+schedule_session_kill() {
+    local resume_file=$1
+    local claude_pid=""
+    for pid in $(pgrep -x claude 2>/dev/null || true); do
+        local cmdline=$(ps -o args= -p "$pid" 2>/dev/null || true)
+        if [ -n "$cmdline" ] && echo "$cmdline" | grep -q "$SESSION_ID" && ! echo "$cmdline" | grep -q "auto-resume"; then
+            claude_pid="$pid"
+            break
+        fi
+    done
+    if [ -n "$claude_pid" ]; then
+        (sleep 60 && [ -f "$resume_file" ] && kill "$claude_pid" 2>/dev/null) &
+    fi
+}
+
 INPUT=$(cat)
 
 # 1. Read rate limit cache
@@ -79,7 +94,8 @@ if [ -n "$RESUME_FILE" ]; then
         EXISTING_AT=$(jq -r '.resume_at // 0' "$RESUME_FILE" 2>/dev/null || echo "0")
         EXISTING_INT=$(printf '%.0f' "$EXISTING_AT" 2>/dev/null || echo 0)
         DELTA=$((EXISTING_INT - NOW)); MINS=$((DELTA / 60)); SECS=$((DELTA % 60))
-        echo -e "⏳ Auto-resume already scheduled at $EXISTING_TIME (in ${MINS}m ${SECS}s) [locked by stop_failure]\n   State: $RESUME_FILE\n   Cancel: rm $RESUME_FILE" >&2
+        echo -e "⏳ Auto-resume already scheduled at $EXISTING_TIME (in ${MINS}m ${SECS}s) [locked by stop_failure]\n   Session will terminate in 60s for scheduled resume.\n   Note: If this session is still active at resume time, resume will be skipped.\n   Cancel: rm $RESUME_FILE" >&2
+        schedule_session_kill "$RESUME_FILE"
         exit 0
     fi
     # File corrupted — fall through to create
@@ -127,6 +143,7 @@ echo "$(date +"%Y-%m-%dT%H:%M:%S%z") SCHEDULED_BY_FAILURE session=$SESSION_ID re
     >> "$HOME/.claude/logs/auto-resume-$(date +%Y-%m-%d).log"
 
 DELTA=$((RESUME_AT - NOW)); MINS=$((DELTA / 60)); SECS=$((DELTA % 60))
-echo -e "⏳ Auto-resume scheduled at $RESUME_DATE (in ${MINS}m ${SECS}s) [locked by stop_failure]\n   State: $RESUME_FILE\n   Cancel: rm $RESUME_FILE" >&2
+echo -e "⏳ Auto-resume scheduled at $RESUME_DATE (in ${MINS}m ${SECS}s) [locked by stop_failure]\n   Session will terminate in 60s for scheduled resume.\n   Note: If this session is still active at resume time, resume will be skipped.\n   Cancel: rm $RESUME_FILE" >&2
+schedule_session_kill "$RESUME_FILE"
 
 exit 0

@@ -20,7 +20,8 @@ Rate limit 100% → hook saves session state → daemon waits for recovery → s
 - **Overuse detection** — automatically detects "additional usage" mode and cancels unnecessary schedules
 - **Per-session state files** — multiple sessions can be tracked independently
 - **Parallel subagent support** — SubagentStop events trigger scheduling too
-- **Active session safety** — skips resume when session is already running (no kill)
+- **Session kill on scheduling** — kills idle Claude process 60s after rate limit scheduling (cancellable by deleting the state file)
+- **Active session safety** — skips resume if user revived the session manually
 - **Cancellation** — delete the state file to cancel any pending resume
 - **Project-level opt-out** — enable/disable per project
 - **Success/failure history** — archived with error output for debugging

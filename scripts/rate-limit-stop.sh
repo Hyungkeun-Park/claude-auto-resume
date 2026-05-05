@@ -32,6 +32,22 @@ cleanup_markers() {
     rmdir "$RESUME_DIR/subagents" 2>/dev/null || true
 }
 
+schedule_session_kill() {
+    local resume_file=$1
+    local claude_pid=""
+    for pid in $(pgrep -x claude 2>/dev/null || true); do
+        local cmdline=$(ps -o args= -p "$pid" 2>/dev/null || true)
+        if [ -n "$cmdline" ] && echo "$cmdline" | grep -q "$SESSION_ID" && ! echo "$cmdline" | grep -q "auto-resume"; then
+            claude_pid="$pid"
+            break
+        fi
+    done
+    if [ -n "$claude_pid" ]; then
+        (sleep 60 && [ -f "$resume_file" ] && kill "$claude_pid" 2>/dev/null) &
+        _diag "KILL_SCHEDULED" "pid=$claude_pid delay=60s"
+    fi
+}
+
 INPUT=$(cat)
 
 DIAG_LOG="$HOME/.claude/logs/auto-resume-$(date +%Y-%m-%d).log"
@@ -215,7 +231,8 @@ if [ -n "$RESUME_FILE" ]; then
             '.scheduled_prompt = $p | .resume_at = $rat | .resume_at_human = $rah | .created_at_rate = $car | .source = (if .source == "stop_failure" then "stop_failure" else $src end)' \
             "$RESUME_FILE" > "$RESUME_FILE.tmp" 2>/dev/null && mv "$RESUME_FILE.tmp" "$RESUME_FILE" || rm -f "$RESUME_FILE.tmp"
         DELTA=$((RESUME_AT - NOW)); MINS=$((DELTA / 60)); SECS=$((DELTA % 60))
-        echo -e "⏳ Auto-resume confirmed at $RESUME_DATE (in ${MINS}m ${SECS}s)\n   State: $RESUME_FILE\n   Cancel: rm $RESUME_FILE" >&2
+        echo -e "⏳ Auto-resume scheduled at $RESUME_DATE (in ${MINS}m ${SECS}s)\n   Session will terminate in 60s for scheduled resume.\n   Note: If this session is still active at resume time, resume will be skipped.\n   Cancel: rm $RESUME_FILE" >&2
+        schedule_session_kill "$RESUME_FILE"
         exit 0
     fi
     # File corrupted — fall through to create
@@ -244,6 +261,7 @@ echo "$(date +"%Y-%m-%dT%H:%M:%S%z") SCHEDULED session=$SESSION_ID resume_at=$RE
     >> "$HOME/.claude/logs/auto-resume-$(date +%Y-%m-%d).log"
 
 DELTA=$((RESUME_AT - NOW)); MINS=$((DELTA / 60)); SECS=$((DELTA % 60))
-echo -e "⏳ Auto-resume confirmed at $RESUME_DATE (in ${MINS}m ${SECS}s)\n   State: $RESUME_FILE\n   Cancel: rm $RESUME_FILE" >&2
+echo -e "⏳ Auto-resume scheduled at $RESUME_DATE (in ${MINS}m ${SECS}s)\n   Session will terminate in 60s for scheduled resume.\n   Note: If this session is still active at resume time, resume will be skipped.\n   Cancel: rm $RESUME_FILE" >&2
+schedule_session_kill "$RESUME_FILE"
 
 exit 0
