@@ -270,7 +270,7 @@ write_cache 100 57
 mkdir -p "$RESUME_DIR/queued"
 jq -n --arg sid "sess-003" --argjson rat "$FUTURE" --arg rah "$FUTURE_DATE" \
     --argjson sat "$NOW" --arg p "original prompt" --argjson car 50 --arg src "stop" \
-    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, prompt: $p, created_at_rate: $car, source: $src}' \
+    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, scheduled_prompt: $p, created_at_rate: $car, source: $src}' \
     > "$(resume_file_for sess-003)"
 EXIT=$(run_stop_hook "$(make_hook_input "sess-003")")
 assert_exit_code "$EXIT" 0
@@ -281,8 +281,8 @@ assert_stderr_contains "$TEST_DIR/stderr_out" "Auto-resume confirmed"
 setup_test "T04_stop_clear_own_file"
 write_cache 100 57
 mkdir -p "$RESUME_DIR/queued"
-echo '{"session_id":"sess-A","resume_at":99999,"prompt":"a","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-A)"
-echo '{"session_id":"sess-B","resume_at":99999,"prompt":"b","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-B)"
+echo '{"session_id":"sess-A","resume_at":99999,"scheduled_prompt":"a","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-A)"
+echo '{"session_id":"sess-B","resume_at":99999,"scheduled_prompt":"b","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-B)"
 # Now rate recovers
 write_cache 50 30
 EXIT=$(run_stop_hook "$(make_hook_input "sess-A")")
@@ -325,7 +325,7 @@ EXIT=$(run_prompt_guard "$(make_hook_input "sess-008" "$TEST_CWD" "my actual pro
 assert_exit_code "$EXIT" 0
 assert_file_exists "$(resume_file_for sess-008)"
 assert_json_field "$(resume_file_for sess-008)" '.session_id' "sess-008"
-assert_json_field "$(resume_file_for sess-008)" '.prompt' "my actual prompt"
+assert_json_field "$(resume_file_for sess-008)" '.prev_prompt' "my actual prompt"
 assert_stderr_contains "$TEST_DIR/stderr_out" "Auto-resume scheduled"
 
 # ─── T09: Prompt guard, same session already scheduled → updates prompt ────────
@@ -334,23 +334,23 @@ write_cache 100 57
 mkdir -p "$RESUME_DIR/queued"
 jq -n --arg sid "sess-009" --argjson rat "$FUTURE" --arg rah "$FUTURE_DATE" \
     --argjson sat "$NOW" --arg p "old prompt" --argjson car 50 --arg src "stop" \
-    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, prompt: $p, created_at_rate: $car, source: $src}' \
+    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, scheduled_prompt: $p, created_at_rate: $car, source: $src}' \
     > "$(resume_file_for sess-009)"
 EXIT=$(run_prompt_guard "$(make_hook_input "sess-009" "$TEST_CWD" "new prompt")")
 assert_exit_code "$EXIT" 0
-assert_json_field "$(resume_file_for sess-009)" '.prompt' "new prompt"
+assert_json_field "$(resume_file_for sess-009)" '.prev_prompt' "new prompt"
 assert_stderr_contains "$TEST_DIR/stderr_out" "prompt updated"
 
 # ─── T10: Prompt guard, different session → creates new file ────────────────
 setup_test "T10_guard_different_session"
 write_cache 100 57
 mkdir -p "$RESUME_DIR/queued"
-echo '{"session_id":"sess-X","resume_at":99999,"prompt":"x","resume_at_human":"x","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-X)"
+echo '{"session_id":"sess-X","resume_at":99999,"scheduled_prompt":"x","resume_at_human":"x","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-X)"
 EXIT=$(run_prompt_guard "$(make_hook_input "sess-010" "$TEST_CWD" "my prompt")")
 assert_exit_code "$EXIT" 0
 assert_file_exists "$(resume_file_for sess-X)"
 assert_file_exists "$(resume_file_for sess-010)"
-assert_json_field "$(resume_file_for sess-010)" '.prompt' "my prompt"
+assert_json_field "$(resume_file_for sess-010)" '.prev_prompt' "my prompt"
 assert_file_count "$RESUME_DIR/queued" 2
 
 # ─── T11: Prompt guard, stale cache at 100% → still creates schedule ──────
@@ -360,7 +360,7 @@ EXIT=$(run_prompt_guard "$(make_hook_input "sess-011" "$TEST_CWD" "stale prompt"
 assert_exit_code "$EXIT" 0
 assert_file_exists "$(resume_file_for sess-011)"
 assert_json_field "$(resume_file_for sess-011)" '.session_id' "sess-011"
-assert_json_field "$(resume_file_for sess-011)" '.prompt' "stale prompt"
+assert_json_field "$(resume_file_for sess-011)" '.prev_prompt' "stale prompt"
 
 # ─── T12: Prompt guard, no cache file → skip ───────────────────────────────
 setup_test "T12_guard_no_cache"
@@ -397,7 +397,7 @@ write_cache 100 57
 mkdir -p "$RESUME_DIR/queued"
 jq -n --arg sid "sess-015" --argjson rat "$FUTURE" --arg rah "$FUTURE_DATE" \
     --argjson sat "$NOW" --arg p "p" --argjson car 50 --arg src "stop" \
-    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, prompt: $p, created_at_rate: $car, source: $src}' \
+    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, scheduled_prompt: $p, created_at_rate: $car, source: $src}' \
     > "$(resume_file_for sess-015)"
 EXIT=$(run_stop_failure "$(make_hook_input "sess-015")")
 assert_exit_code "$EXIT" 0
@@ -408,7 +408,7 @@ assert_stderr_contains "$TEST_DIR/stderr_out" "locked by stop_failure"
 setup_test "T16_failure_different_session"
 write_cache 100 57
 mkdir -p "$RESUME_DIR/queued"
-echo '{"session_id":"sess-other","resume_at":99999,"prompt":"p","resume_at_human":"t","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-other)"
+echo '{"session_id":"sess-other","resume_at":99999,"scheduled_prompt":"p","resume_at_human":"t","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-other)"
 EXIT=$(run_stop_failure "$(make_hook_input "sess-016")")
 assert_exit_code "$EXIT" 0
 assert_file_exists "$(resume_file_for sess-other)"
@@ -437,17 +437,17 @@ assert_exit_code "$EXIT" 0
 EXIT=$(run_prompt_guard "$(make_hook_input "sess-C" "$TEST_CWD" "prompt C")")
 assert_exit_code "$EXIT" 0
 assert_file_count "$RESUME_DIR/queued" 3
-assert_json_field "$(resume_file_for sess-A)" '.prompt' "prompt A"
-assert_json_field "$(resume_file_for sess-B)" '.prompt' "prompt B"
-assert_json_field "$(resume_file_for sess-C)" '.prompt' "prompt C"
+assert_json_field "$(resume_file_for sess-A)" '.prev_prompt' "prompt A"
+assert_json_field "$(resume_file_for sess-B)" '.prev_prompt' "prompt B"
+assert_json_field "$(resume_file_for sess-C)" '.prev_prompt' "prompt C"
 
 # ─── T19: Rate recovery clears only the recovering session ──────────────────
 setup_test "T19_multi_session_selective_clear"
 write_cache 100 57
 mkdir -p "$RESUME_DIR/queued"
-echo '{"session_id":"sess-D","resume_at":99999,"prompt":"d","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-D)"
-echo '{"session_id":"sess-E","resume_at":99999,"prompt":"e","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-E)"
-echo '{"session_id":"sess-F","resume_at":99999,"prompt":"f","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-F)"
+echo '{"session_id":"sess-D","resume_at":99999,"scheduled_prompt":"d","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-D)"
+echo '{"session_id":"sess-E","resume_at":99999,"scheduled_prompt":"e","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-E)"
+echo '{"session_id":"sess-F","resume_at":99999,"scheduled_prompt":"f","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-F)"
 write_cache 50 30
 EXIT=$(run_stop_hook "$(make_hook_input "sess-E")")
 assert_exit_code "$EXIT" 0
@@ -459,7 +459,7 @@ assert_file_exists "$(resume_file_for sess-F)"
 setup_test "T20_stop_creates_for_new_session"
 write_cache 100 57
 mkdir -p "$RESUME_DIR/queued"
-echo '{"session_id":"sess-old","resume_at":99999,"prompt":"old","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-old)"
+echo '{"session_id":"sess-old","resume_at":99999,"scheduled_prompt":"old","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-old)"
 EXIT=$(run_stop_hook "$(make_hook_input "sess-new")")
 assert_exit_code "$EXIT" 0
 assert_file_exists "$(resume_file_for sess-old)"
@@ -475,14 +475,14 @@ setup_test "T21_prompt_double_quotes"
 write_cache 100 57
 EXIT=$(run_prompt_guard "$(make_hook_input "sess-021" "$TEST_CWD" 'say "hello world"')")
 assert_exit_code "$EXIT" 0
-assert_json_field "$(resume_file_for sess-021)" '.prompt' 'say "hello world"'
+assert_json_field "$(resume_file_for sess-021)" '.prev_prompt' 'say "hello world"'
 
 # ─── T22: Single quotes in prompt ──────────────────────────────────────────
 setup_test "T22_prompt_single_quotes"
 write_cache 100 57
 EXIT=$(run_prompt_guard "$(make_hook_input "sess-022" "$TEST_CWD" "it's a test")")
 assert_exit_code "$EXIT" 0
-assert_json_field "$(resume_file_for sess-022)" '.prompt' "it's a test"
+assert_json_field "$(resume_file_for sess-022)" '.prev_prompt' "it's a test"
 
 # ─── T23: Backslashes in prompt ────────────────────────────────────────────
 setup_test "T23_prompt_backslash"
@@ -490,7 +490,7 @@ write_cache 100 57
 EXIT=$(run_prompt_guard "$(make_hook_input "sess-023" "$TEST_CWD" 'c:\users\test')")
 assert_exit_code "$EXIT" 0
 TOTAL=$((TOTAL + 1))
-ACTUAL=$(jq -r '.prompt' "$(resume_file_for sess-023)" 2>/dev/null)
+ACTUAL=$(jq -r '.prev_prompt' "$(resume_file_for sess-023)" 2>/dev/null)
 if [ "$ACTUAL" = 'c:\users\test' ]; then PASS=$((PASS + 1)); else
     FAIL=$((FAIL + 1)); echo -e "  ${RED}FAIL${NC}: backslash prompt = '$ACTUAL'"; fi
 
@@ -500,7 +500,7 @@ write_cache 100 57
 PROMPT_NL=$(printf 'line1\nline2')
 EXIT=$(run_prompt_guard "$(make_hook_input "sess-024" "$TEST_CWD" "$PROMPT_NL")")
 assert_exit_code "$EXIT" 0
-SAVED=$(jq -r '.prompt' "$(resume_file_for sess-024)")
+SAVED=$(jq -r '.prev_prompt' "$(resume_file_for sess-024)")
 if echo "$SAVED" | grep -q "line1"; then
     TOTAL=$((TOTAL + 1)); PASS=$((PASS + 1))
 else
@@ -513,14 +513,14 @@ setup_test "T25_prompt_korean"
 write_cache 100 57
 EXIT=$(run_prompt_guard "$(make_hook_input "sess-025" "$TEST_CWD" "한국어 테스트 프롬프트")")
 assert_exit_code "$EXIT" 0
-assert_json_field "$(resume_file_for sess-025)" '.prompt' "한국어 테스트 프롬프트"
+assert_json_field "$(resume_file_for sess-025)" '.prev_prompt' "한국어 테스트 프롬프트"
 
 # ─── T26: JSON-in-prompt ───────────────────────────────────────────────────
 setup_test "T26_prompt_json"
 write_cache 100 57
 EXIT=$(run_prompt_guard "$(make_hook_input "sess-026" "$TEST_CWD" '{"key": "value", "num": 42}')")
 assert_exit_code "$EXIT" 0
-assert_json_field "$(resume_file_for sess-026)" '.prompt' '{"key": "value", "num": 42}'
+assert_json_field "$(resume_file_for sess-026)" '.prev_prompt' '{"key": "value", "num": 42}'
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Tests: Both Limits at 100%
@@ -605,7 +605,7 @@ write_cache 100 57 "$EARLY"
 mkdir -p "$RESUME_DIR/queued"
 jq -n --arg sid "sess-035" --argjson rat "$LATE" --arg rah "old-time" \
     --argjson sat "$NOW" --arg p "old prompt" --argjson car 50 --arg src "stop" \
-    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, prompt: $p, created_at_rate: $car, source: $src}' \
+    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, scheduled_prompt: $p, created_at_rate: $car, source: $src}' \
     > "$(resume_file_for sess-035)"
 EXIT=$(run_stop_hook "$(make_hook_input "sess-035")")
 assert_exit_code "$EXIT" 0
@@ -636,7 +636,7 @@ write_cache 100 57
 EXIT=$(run_prompt_guard "$(make_hook_input "sess-037" "$TEST_CWD" "user prompt")")
 assert_exit_code "$EXIT" 0
 assert_file_exists "$(resume_file_for sess-037)"
-assert_json_field "$(resume_file_for sess-037)" '.prompt' "user prompt"
+assert_json_field "$(resume_file_for sess-037)" '.prev_prompt' "user prompt"
 assert_json_field "$(resume_file_for sess-037)" '.source' "user_prompt"
 
 # StopFailure locks source to stop_failure (protects from overuse detection)
@@ -687,7 +687,7 @@ echo "NOT VALID JSON{{{" > "$(resume_file_for sess-039)"
 EXIT=$(run_prompt_guard "$(make_hook_input "sess-039" "$TEST_CWD" "recovery prompt")")
 assert_exit_code "$EXIT" 0
 # Should overwrite corrupted file with valid JSON
-assert_json_field "$(resume_file_for sess-039)" '.prompt' "recovery prompt"
+assert_json_field "$(resume_file_for sess-039)" '.prev_prompt' "recovery prompt"
 
 # ─── T40: Stop hook with corrupted existing file → creates new ──────────────
 setup_test "T40_stop_corrupted_file"
@@ -714,7 +714,7 @@ assert_exit_code "$EXIT" 0
 setup_test "T42_dir_cleanup"
 write_cache 100 57
 mkdir -p "$RESUME_DIR/queued"
-echo '{"session_id":"sess-042","resume_at":99999,"prompt":"p","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-042)"
+echo '{"session_id":"sess-042","resume_at":99999,"scheduled_prompt":"p","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-042)"
 write_cache 50 30
 EXIT=$(run_stop_hook "$(make_hook_input "sess-042")")
 assert_exit_code "$EXIT" 0
@@ -732,8 +732,8 @@ fi
 setup_test "T43_dir_not_removed_if_others"
 write_cache 100 57
 mkdir -p "$RESUME_DIR/queued"
-echo '{"session_id":"sess-043a","resume_at":99999,"prompt":"a","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-043a)"
-echo '{"session_id":"sess-043b","resume_at":99999,"prompt":"b","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-043b)"
+echo '{"session_id":"sess-043a","resume_at":99999,"scheduled_prompt":"a","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-043a)"
+echo '{"session_id":"sess-043b","resume_at":99999,"scheduled_prompt":"b","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-043b)"
 write_cache 50 30
 EXIT=$(run_stop_hook "$(make_hook_input "sess-043a")")
 assert_exit_code "$EXIT" 0
@@ -781,7 +781,7 @@ write_cache 100 57
 mkdir -p "$RESUME_DIR/queued"
 jq -n --arg sid "sess-046" --argjson rat "$FUTURE" --arg rah "$FUTURE_DATE" \
     --argjson sat "$NOW" --arg p "prompt" --argjson car 100 --arg src "user_prompt" \
-    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, prompt: $p, created_at_rate: $car, source: $src}' \
+    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, scheduled_prompt: $p, created_at_rate: $car, source: $src}' \
     > "$(resume_file_for sess-046)"
 EXIT=$(run_stop_hook "$(make_hook_input "sess-046" "$TEST_CWD" "" "SubagentStop")")
 assert_exit_code "$EXIT" 0
@@ -811,7 +811,7 @@ write_cache 100 57
 mkdir -p "$RESUME_DIR/queued"
 jq -n --arg sid "sess-048" --argjson rat "$FUTURE" --arg rah "$FUTURE_DATE" \
     --argjson sat "$NOW" --arg p "prompt" --argjson car 100 --arg src "user_prompt" \
-    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, prompt: $p, created_at_rate: $car, source: $src}' \
+    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, scheduled_prompt: $p, created_at_rate: $car, source: $src}' \
     > "$(resume_file_for sess-048)"
 # Rate recovers
 write_cache 50 30
@@ -828,7 +828,7 @@ write_cache 100 57
 mkdir -p "$RESUME_DIR/queued"
 jq -n --arg sid "sess-049" --argjson rat "$FUTURE" --arg rah "$FUTURE_DATE" \
     --argjson sat "$NOW" --arg p "prompt" --argjson car 50 --arg src "stop" \
-    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, prompt: $p, created_at_rate: $car, source: $src}' \
+    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, scheduled_prompt: $p, created_at_rate: $car, source: $src}' \
     > "$(resume_file_for sess-049)"
 EXIT=$(run_stop_hook "$(make_hook_input "sess-049")")
 assert_exit_code "$EXIT" 0
@@ -871,7 +871,7 @@ write_cache 100 57
 mkdir -p "$RESUME_DIR/queued"
 jq -n --arg sid "sess-054" --argjson rat "$FUTURE" --arg rah "$FUTURE_DATE" \
     --argjson sat "$NOW" --arg p "prompt" --argjson car 50 --arg src "user_prompt" \
-    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, prompt: $p, created_at_rate: $car, source: $src}' \
+    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, scheduled_prompt: $p, created_at_rate: $car, source: $src}' \
     > "$(resume_file_for sess-054)"
 EXIT=$(run_stop_failure "$(make_hook_input "sess-054")")
 assert_exit_code "$EXIT" 0
@@ -883,7 +883,7 @@ write_cache 100 57
 mkdir -p "$RESUME_DIR/queued"
 jq -n --arg sid "sess-055" --argjson rat "$FUTURE" --arg rah "$FUTURE_DATE" \
     --argjson sat "$NOW" --arg p "prompt" --argjson car 50 --arg src "stop_failure" \
-    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, prompt: $p, created_at_rate: $car, source: $src}' \
+    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, scheduled_prompt: $p, created_at_rate: $car, source: $src}' \
     > "$(resume_file_for sess-055)"
 EXIT=$(run_stop_hook "$(make_hook_input "sess-055")")
 assert_exit_code "$EXIT" 0
@@ -937,7 +937,7 @@ write_cache 100 57
 mkdir -p "$RESUME_DIR/queued"
 jq -n --arg sid "sess-059" --argjson rat "$FUTURE" --arg rah "$FUTURE_DATE" \
     --argjson sat "$NOW" --arg p "prompt" --argjson car 100 --arg src "user_prompt" \
-    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, prompt: $p, created_at_rate: $car, source: $src}' \
+    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, scheduled_prompt: $p, created_at_rate: $car, source: $src}' \
     > "$(resume_file_for sess-059)"
 # Create surviving marker (rate-limited subagent hasn't stopped yet)
 mkdir -p "$(marker_dir_for sess-059)"
@@ -956,7 +956,7 @@ write_cache 100 57
 mkdir -p "$RESUME_DIR/queued"
 jq -n --arg sid "sess-060" --argjson rat "$FUTURE" --arg rah "$FUTURE_DATE" \
     --argjson sat "$NOW" --arg p "prompt" --argjson car 100 --arg src "user_prompt" \
-    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, prompt: $p, created_at_rate: $car, source: $src}' \
+    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, scheduled_prompt: $p, created_at_rate: $car, source: $src}' \
     > "$(resume_file_for sess-060)"
 # No markers — overuse should trigger as before
 EXIT=$(run_stop_hook "$(make_hook_input "sess-060")")
@@ -1054,7 +1054,7 @@ write_cache 100 57
 mkdir -p "$RESUME_DIR/queued"
 jq -n --arg sid "sess-066" --argjson rat "$FUTURE" --arg rah "$FUTURE_DATE" \
     --argjson sat "$NOW" --arg p "prompt" --argjson car 100 --arg src "user_prompt" \
-    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, prompt: $p, created_at_rate: $car, source: $src}' \
+    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, scheduled_prompt: $p, created_at_rate: $car, source: $src}' \
     > "$(resume_file_for sess-066)"
 # Create empty marker dir (all subagents completed)
 mkdir -p "$(marker_dir_for sess-066)"
@@ -1119,7 +1119,7 @@ write_cache 100 57 "$FUTURE" "$FUTURE" "$((NOW - 400))"
 EXIT=$(run_prompt_guard "$(make_hook_input "sess-072" "$TEST_CWD" "my important work")")
 assert_exit_code "$EXIT" 0
 assert_file_exists "$(resume_file_for sess-072)"
-assert_json_field "$(resume_file_for sess-072)" '.prompt' "my important work"
+assert_json_field "$(resume_file_for sess-072)" '.prev_prompt' "my important work"
 assert_json_field "$(resume_file_for sess-072)" '.source' "user_prompt"
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1313,8 +1313,8 @@ RESUME_A=$(ls "$CWD_A/.claude/auto-resume/queued"/*"-shared-session.json" 2>/dev
 RESUME_B=$(ls "$CWD_B/.claude/auto-resume/queued"/*"-shared-session.json" 2>/dev/null | head -1)
 assert_file_exists "$RESUME_A"
 assert_file_exists "$RESUME_B"
-assert_json_field "$RESUME_A" '.prompt' "prompt A"
-assert_json_field "$RESUME_B" '.prompt' "prompt B"
+assert_json_field "$RESUME_A" '.prev_prompt' "prompt A"
+assert_json_field "$RESUME_B" '.prev_prompt' "prompt B"
 
 # ─── T91: Rate exactly at boundary (99.5 rounds to 100) → creates schedule ─
 setup_test "T91_rate_boundary_99_5"

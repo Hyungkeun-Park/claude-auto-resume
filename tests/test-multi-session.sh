@@ -16,17 +16,17 @@ assert_exit_code "$EXIT" 0
 EXIT=$(run_prompt_guard "$(make_hook_input "sess-C" "$TEST_CWD" "prompt C")")
 assert_exit_code "$EXIT" 0
 assert_file_count "$RESUME_DIR/queued" 3
-assert_json_field "$(resume_file_for sess-A)" '.prompt' "prompt A"
-assert_json_field "$(resume_file_for sess-B)" '.prompt' "prompt B"
-assert_json_field "$(resume_file_for sess-C)" '.prompt' "prompt C"
+assert_json_field "$(resume_file_for sess-A)" '.prev_prompt' "prompt A"
+assert_json_field "$(resume_file_for sess-B)" '.prev_prompt' "prompt B"
+assert_json_field "$(resume_file_for sess-C)" '.prev_prompt' "prompt C"
 
 # ─── T19: Rate recovery clears only the recovering session ──────────────────
 setup_test "T19_multi_session_selective_clear"
 write_cache 100 57
 mkdir -p "$RESUME_DIR/queued"
-echo '{"session_id":"sess-D","resume_at":99999,"prompt":"d","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-D)"
-echo '{"session_id":"sess-E","resume_at":99999,"prompt":"e","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-E)"
-echo '{"session_id":"sess-F","resume_at":99999,"prompt":"f","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-F)"
+echo '{"session_id":"sess-D","resume_at":99999,"scheduled_prompt":"d","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-D)"
+echo '{"session_id":"sess-E","resume_at":99999,"scheduled_prompt":"e","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-E)"
+echo '{"session_id":"sess-F","resume_at":99999,"scheduled_prompt":"f","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-F)"
 write_cache 50 30
 EXIT=$(run_stop_hook "$(make_hook_input "sess-E")")
 assert_exit_code "$EXIT" 0
@@ -38,7 +38,7 @@ assert_file_exists "$(resume_file_for sess-F)"
 setup_test "T20_stop_creates_for_new_session"
 write_cache 100 57
 mkdir -p "$RESUME_DIR/queued"
-echo '{"session_id":"sess-old","resume_at":99999,"prompt":"old","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-old)"
+echo '{"session_id":"sess-old","resume_at":99999,"scheduled_prompt":"old","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-old)"
 EXIT=$(run_stop_hook "$(make_hook_input "sess-new")")
 assert_exit_code "$EXIT" 0
 assert_file_exists "$(resume_file_for sess-old)"

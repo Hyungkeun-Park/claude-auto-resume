@@ -29,7 +29,7 @@ write_cache 100 57
 mkdir -p "$RESUME_DIR/queued"
 jq -n --arg sid "sess-015" --argjson rat "$FUTURE" --arg rah "$FUTURE_DATE" \
     --argjson sat "$NOW" --arg p "p" --argjson car 50 --arg src "stop" \
-    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, prompt: $p, created_at_rate: $car, source: $src}' \
+    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, scheduled_prompt: $p, created_at_rate: $car, source: $src}' \
     > "$(resume_file_for sess-015)"
 EXIT=$(run_stop_failure "$(make_hook_input "sess-015")")
 assert_exit_code "$EXIT" 0
@@ -40,7 +40,7 @@ assert_stderr_contains "$TEST_DIR/stderr_out" "locked by stop_failure"
 setup_test "T16_failure_different_session"
 write_cache 100 57
 mkdir -p "$RESUME_DIR/queued"
-echo '{"session_id":"sess-other","resume_at":99999,"prompt":"p","resume_at_human":"t","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-other)"
+echo '{"session_id":"sess-other","resume_at":99999,"scheduled_prompt":"p","resume_at_human":"t","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-other)"
 EXIT=$(run_stop_failure "$(make_hook_input "sess-016")")
 assert_exit_code "$EXIT" 0
 assert_file_exists "$(resume_file_for sess-other)"

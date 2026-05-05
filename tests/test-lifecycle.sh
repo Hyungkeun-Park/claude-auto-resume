@@ -20,7 +20,7 @@ write_cache 100 57
 EXIT=$(run_prompt_guard "$(make_hook_input "sess-037" "$TEST_CWD" "user prompt")")
 assert_exit_code "$EXIT" 0
 assert_file_exists "$(resume_file_for sess-037)"
-assert_json_field "$(resume_file_for sess-037)" '.prompt' "user prompt"
+assert_json_field "$(resume_file_for sess-037)" '.prev_prompt' "user prompt"
 assert_json_field "$(resume_file_for sess-037)" '.source' "user_prompt"
 
 # StopFailure locks source to stop_failure (protects from overuse detection)
@@ -31,7 +31,7 @@ assert_json_field "$(resume_file_for sess-037)" '.source' "stop_failure"
 # Stop confirms (sees source=stop_failure → skips overuse, updates prompt)
 EXIT=$(run_stop_hook "$(make_hook_input "sess-037")")
 assert_exit_code "$EXIT" 0
-assert_json_field "$(resume_file_for sess-037)" '.prompt' "$FIXED_PROMPT"
+assert_json_field "$(resume_file_for sess-037)" '.scheduled_prompt' "$FIXED_PROMPT"
 assert_stderr_contains "$TEST_DIR/stderr_out" "Auto-resume confirmed"
 
 # Rate recovers
@@ -67,7 +67,7 @@ echo "NOT VALID JSON{{{" > "$(resume_file_for sess-039)"
 EXIT=$(run_prompt_guard "$(make_hook_input "sess-039" "$TEST_CWD" "recovery prompt")")
 assert_exit_code "$EXIT" 0
 # Should overwrite corrupted file with valid JSON
-assert_json_field "$(resume_file_for sess-039)" '.prompt' "recovery prompt"
+assert_json_field "$(resume_file_for sess-039)" '.prev_prompt' "recovery prompt"
 
 # ─── T40: Stop hook with corrupted existing file → creates new ──────────────
 setup_test "T40_stop_corrupted_file"
@@ -90,7 +90,7 @@ assert_exit_code "$EXIT" 0
 setup_test "T42_dir_cleanup"
 write_cache 100 57
 mkdir -p "$RESUME_DIR/queued"
-echo '{"session_id":"sess-042","resume_at":99999,"prompt":"p","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-042)"
+echo '{"session_id":"sess-042","resume_at":99999,"scheduled_prompt":"p","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-042)"
 write_cache 50 30
 EXIT=$(run_stop_hook "$(make_hook_input "sess-042")")
 assert_exit_code "$EXIT" 0
@@ -108,8 +108,8 @@ fi
 setup_test "T43_dir_not_removed_if_others"
 write_cache 100 57
 mkdir -p "$RESUME_DIR/queued"
-echo '{"session_id":"sess-043a","resume_at":99999,"prompt":"a","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-043a)"
-echo '{"session_id":"sess-043b","resume_at":99999,"prompt":"b","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-043b)"
+echo '{"session_id":"sess-043a","resume_at":99999,"scheduled_prompt":"a","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-043a)"
+echo '{"session_id":"sess-043b","resume_at":99999,"scheduled_prompt":"b","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-043b)"
 write_cache 50 30
 EXIT=$(run_stop_hook "$(make_hook_input "sess-043a")")
 assert_exit_code "$EXIT" 0

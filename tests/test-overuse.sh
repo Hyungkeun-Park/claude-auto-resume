@@ -38,7 +38,7 @@ write_cache 100 57
 mkdir -p "$RESUME_DIR/queued"
 jq -n --arg sid "sess-046" --argjson rat "$FUTURE" --arg rah "$FUTURE_DATE" \
     --argjson sat "$NOW" --arg p "prompt" --argjson car 100 --arg src "user_prompt" \
-    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, prompt: $p, created_at_rate: $car, source: $src}' \
+    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, scheduled_prompt: $p, created_at_rate: $car, source: $src}' \
     > "$(resume_file_for sess-046)"
 EXIT=$(run_stop_hook "$(make_hook_input "sess-046" "$TEST_CWD" "" "SubagentStop")")
 assert_exit_code "$EXIT" 0
@@ -68,7 +68,7 @@ write_cache 100 57
 mkdir -p "$RESUME_DIR/queued"
 jq -n --arg sid "sess-048" --argjson rat "$FUTURE" --arg rah "$FUTURE_DATE" \
     --argjson sat "$NOW" --arg p "prompt" --argjson car 100 --arg src "user_prompt" \
-    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, prompt: $p, created_at_rate: $car, source: $src}' \
+    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, scheduled_prompt: $p, created_at_rate: $car, source: $src}' \
     > "$(resume_file_for sess-048)"
 # Rate recovers
 write_cache 50 30
@@ -85,7 +85,7 @@ write_cache 100 57
 mkdir -p "$RESUME_DIR/queued"
 jq -n --arg sid "sess-049" --argjson rat "$FUTURE" --arg rah "$FUTURE_DATE" \
     --argjson sat "$NOW" --arg p "prompt" --argjson car 50 --arg src "stop" \
-    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, prompt: $p, created_at_rate: $car, source: $src}' \
+    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, scheduled_prompt: $p, created_at_rate: $car, source: $src}' \
     > "$(resume_file_for sess-049)"
 EXIT=$(run_stop_hook "$(make_hook_input "sess-049")")
 assert_exit_code "$EXIT" 0
@@ -128,7 +128,7 @@ write_cache 100 57
 mkdir -p "$RESUME_DIR/queued"
 jq -n --arg sid "sess-054" --argjson rat "$FUTURE" --arg rah "$FUTURE_DATE" \
     --argjson sat "$NOW" --arg p "prompt" --argjson car 50 --arg src "user_prompt" \
-    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, prompt: $p, created_at_rate: $car, source: $src}' \
+    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, scheduled_prompt: $p, created_at_rate: $car, source: $src}' \
     > "$(resume_file_for sess-054)"
 EXIT=$(run_stop_failure "$(make_hook_input "sess-054")")
 assert_exit_code "$EXIT" 0
@@ -140,7 +140,7 @@ write_cache 100 57
 mkdir -p "$RESUME_DIR/queued"
 jq -n --arg sid "sess-055" --argjson rat "$FUTURE" --arg rah "$FUTURE_DATE" \
     --argjson sat "$NOW" --arg p "prompt" --argjson car 50 --arg src "stop_failure" \
-    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, prompt: $p, created_at_rate: $car, source: $src}' \
+    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, scheduled_prompt: $p, created_at_rate: $car, source: $src}' \
     > "$(resume_file_for sess-055)"
 EXIT=$(run_stop_hook "$(make_hook_input "sess-055")")
 assert_exit_code "$EXIT" 0

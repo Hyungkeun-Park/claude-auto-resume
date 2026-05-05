@@ -3,6 +3,18 @@
 All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.3.1] - 2026-05-05
+
+### Added
+- `prev_prompt` field in state files: stores the user's original prompt so users can identify what each session was working on by inspecting the JSON file
+- `scheduled_prompt` field: renamed from `prompt` for clarity (the prompt sent on resume)
+- Daemon backward compatibility: reads `scheduled_prompt` with fallback to `prompt` for pre-existing state files
+
+### Changed
+- `prompt` field renamed to `scheduled_prompt` across all hooks and state files
+- Stop hook preserves `prev_prompt` when updating existing files (no longer overwrites user's original prompt)
+- UserPromptSubmit hook saves both `prev_prompt` and `scheduled_prompt` from user input
+
 ## [1.3.0] - 2026-05-05
 
 ### Added

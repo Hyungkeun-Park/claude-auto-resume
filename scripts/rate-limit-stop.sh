@@ -4,8 +4,8 @@
 # Each session manages its own file in <project>/.claude/auto-resume/queued/yymmdd-hhmmss-<session-id>.json
 #
 # State machine (for MY session only):
-# - rate 100% + my file doesn't exist → create (fixed prompt, spawn resume)
-# - rate 100% + my file exists → update resume_at and prompt
+# - rate 100% + my file doesn't exist → create (fixed scheduled_prompt, spawn resume)
+# - rate 100% + my file exists → update resume_at and scheduled_prompt
 # - rate < 100% + my file exists → delete + kill my resume process
 # - rate < 100% + my file doesn't exist → nothing
 #
@@ -196,13 +196,13 @@ else
     SOURCE="subagent_stop"
 fi
 
-# ── 8. My file exists → update prompt and resume_at (if valid JSON) ──
+# ── 8. My file exists → update scheduled_prompt and resume_at (if valid JSON) ──
 [ -n "$RESUME_FILE" ] && [ -L "$RESUME_FILE" ] && rm -f "$RESUME_FILE" && RESUME_FILE=""
 if [ -n "$RESUME_FILE" ]; then
     EXISTING_SID=$(jq -r '.session_id // empty' "$RESUME_FILE" 2>/dev/null || echo "")
     if [ -n "$EXISTING_SID" ]; then
         jq --arg p "$FIXED_PROMPT" --argjson rat "$RESUME_AT" --arg rah "$RESUME_DATE" --arg src "$SOURCE" --argjson car "$CURRENT_RATE" \
-            '.prompt = $p | .resume_at = $rat | .resume_at_human = $rah | .created_at_rate = $car | .source = (if .source == "stop_failure" then "stop_failure" else $src end)' \
+            '.scheduled_prompt = $p | .resume_at = $rat | .resume_at_human = $rah | .created_at_rate = $car | .source = (if .source == "stop_failure" then "stop_failure" else $src end)' \
             "$RESUME_FILE" > "$RESUME_FILE.tmp" 2>/dev/null && mv "$RESUME_FILE.tmp" "$RESUME_FILE" || rm -f "$RESUME_FILE.tmp"
         DELTA=$((RESUME_AT - NOW)); MINS=$((DELTA / 60)); SECS=$((DELTA % 60))
         echo -e "⏳ Auto-resume confirmed at $RESUME_DATE (in ${MINS}m ${SECS}s)\n   State: $RESUME_FILE\n   Cancel: rm $RESUME_FILE" >&2
@@ -224,7 +224,7 @@ jq -n \
     --arg p "$FIXED_PROMPT" \
     --argjson car "$CURRENT_RATE" \
     --arg src "$SOURCE" \
-    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, scheduled_at_human: $sah, prompt: $p, created_at_rate: $car, source: $src}' \
+    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, scheduled_at_human: $sah, scheduled_prompt: $p, created_at_rate: $car, source: $src}' \
     > "$RESUME_FILE.tmp" && mv "$RESUME_FILE.tmp" "$RESUME_FILE" || rm -f "$RESUME_FILE.tmp"
 
 nohup bash "$HOME/.claude/bin/claude-auto-resume.sh" "$SESSION_ID" "$RESUME_AT" "$CWD" \

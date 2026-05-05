@@ -250,7 +250,7 @@ fi
 # ── 3. Read prompt from state file ──
 SAVED_PROMPT="$FIXED_PROMPT"
 if [ -f "$RESUME_FILE" ]; then
-    FILE_PROMPT=$(jq -r '.prompt // ""' "$RESUME_FILE" 2>/dev/null)
+    FILE_PROMPT=$(jq -r '.scheduled_prompt // .prompt // ""' "$RESUME_FILE" 2>/dev/null)
     [ -n "$FILE_PROMPT" ] && SAVED_PROMPT="$FILE_PROMPT"
 fi
 

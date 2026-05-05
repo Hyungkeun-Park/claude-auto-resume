@@ -114,7 +114,7 @@ jq -n \
     --arg p "If any agents failed in the previous task, do not perform their work directly — re-launch the same agents. If it was not an agent failure, continue with the remaining work." \
     --argjson car "$CURRENT_RATE" \
     --arg src "stop_failure" \
-    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, scheduled_at_human: $sah, prompt: $p, created_at_rate: $car, source: $src}' \
+    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, scheduled_at_human: $sah, scheduled_prompt: $p, created_at_rate: $car, source: $src}' \
     > "$RESUME_FILE.tmp" && mv "$RESUME_FILE.tmp" "$RESUME_FILE" || rm -f "$RESUME_FILE.tmp"
 
 # 7. Spawn resume process

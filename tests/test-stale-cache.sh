@@ -57,7 +57,7 @@ write_cache 100 57 "$FUTURE" "$FUTURE" "$((NOW - 400))"
 EXIT=$(run_prompt_guard "$(make_hook_input "sess-072" "$TEST_CWD" "my important work")")
 assert_exit_code "$EXIT" 0
 assert_file_exists "$(resume_file_for sess-072)"
-assert_json_field "$(resume_file_for sess-072)" '.prompt' "my important work"
+assert_json_field "$(resume_file_for sess-072)" '.prev_prompt' "my important work"
 assert_json_field "$(resume_file_for sess-072)" '.source' "user_prompt"
 
 print_summary "Stale Cache + Rate Gate G17"

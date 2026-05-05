@@ -132,7 +132,8 @@ Overuse → hard limit transition:
   "scheduled_at": 1777648658,
   "created_at_rate": 100,
   "source": "user_prompt",
-  "prompt": "If any agents failed in the previous task, do not perform their work directly — re-launch the same agents. If it was not an agent failure, continue with the remaining work."
+  "prev_prompt": "implement the login feature with OAuth",
+  "scheduled_prompt": "If any agents failed in the previous task, do not perform their work directly — re-launch the same agents. If it was not an agent failure, continue with the remaining work."
 }
 ```
 
@@ -144,7 +145,8 @@ Overuse → hard limit transition:
 | `scheduled_at` | When the schedule was created |
 | `created_at_rate` | Rate % at creation time (overuse detection) |
 | `source` | Creating hook: `user_prompt`, `stop`, `subagent_stop`, `stop_failure` |
-| `prompt` | Prompt to send on resume (editable by user) |
+| `prev_prompt` | User's original prompt (what was being worked on) |
+| `scheduled_prompt` | Prompt to send on resume (editable by user) |
 
 ## Cancel a Pending Resume
 

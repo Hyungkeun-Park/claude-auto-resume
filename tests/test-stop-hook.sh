@@ -20,7 +20,7 @@ EXIT=$(run_stop_hook "$(make_hook_input "sess-002")")
 assert_exit_code "$EXIT" 0
 assert_file_exists "$(resume_file_for sess-002)"
 assert_json_field "$(resume_file_for sess-002)" '.session_id' "sess-002"
-assert_json_field "$(resume_file_for sess-002)" '.prompt' "$FIXED_PROMPT"
+assert_json_field "$(resume_file_for sess-002)" '.scheduled_prompt' "$FIXED_PROMPT"
 assert_stderr_contains "$TEST_DIR/stderr_out" "Auto-resume confirmed"
 
 # ─── T03: Stop hook, my file exists → update prompt and resume_at ───────────
@@ -29,19 +29,19 @@ write_cache 100 57
 mkdir -p "$RESUME_DIR/queued"
 jq -n --arg sid "sess-003" --argjson rat "$FUTURE" --arg rah "$FUTURE_DATE" \
     --argjson sat "$NOW" --arg p "original prompt" --argjson car 50 --arg src "stop" \
-    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, prompt: $p, created_at_rate: $car, source: $src}' \
+    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, scheduled_prompt: $p, created_at_rate: $car, source: $src}' \
     > "$(resume_file_for sess-003)"
 EXIT=$(run_stop_hook "$(make_hook_input "sess-003")")
 assert_exit_code "$EXIT" 0
-assert_json_field "$(resume_file_for sess-003)" '.prompt' "$FIXED_PROMPT"
+assert_json_field "$(resume_file_for sess-003)" '.scheduled_prompt' "$FIXED_PROMPT"
 assert_stderr_contains "$TEST_DIR/stderr_out" "Auto-resume confirmed"
 
 # ─── T04: Stop hook, rate < 100% → clear MY file only ──────────────────────
 setup_test "T04_stop_clear_own_file"
 write_cache 100 57
 mkdir -p "$RESUME_DIR/queued"
-echo '{"session_id":"sess-A","resume_at":99999,"prompt":"a","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-A)"
-echo '{"session_id":"sess-B","resume_at":99999,"prompt":"b","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-B)"
+echo '{"session_id":"sess-A","resume_at":99999,"scheduled_prompt":"a","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-A)"
+echo '{"session_id":"sess-B","resume_at":99999,"scheduled_prompt":"b","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-B)"
 # Now rate recovers
 write_cache 50 30
 EXIT=$(run_stop_hook "$(make_hook_input "sess-A")")

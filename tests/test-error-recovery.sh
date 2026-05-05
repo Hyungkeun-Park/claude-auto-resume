@@ -52,7 +52,7 @@ LONG_PROMPT=$(python3 -c "print('A' * 10000)")
 EXIT=$(run_prompt_guard "$(make_hook_input "sess-088" "$TEST_CWD" "$LONG_PROMPT")")
 assert_exit_code "$EXIT" 0
 assert_file_exists "$(resume_file_for sess-088)"
-STORED_LEN=$(jq -r '.prompt | length' "$(resume_file_for sess-088)" 2>/dev/null)
+STORED_LEN=$(jq -r '.prev_prompt | length' "$(resume_file_for sess-088)" 2>/dev/null)
 TOTAL=$((TOTAL + 1))
 if [ "$STORED_LEN" -eq 10000 ]; then PASS=$((PASS + 1)); else
     FAIL=$((FAIL + 1)); echo -e "  ${RED}FAIL${NC}: prompt length = $STORED_LEN (expected 10000)"
@@ -88,8 +88,8 @@ FILE_A=$(find_resume_file "$CWD_A/.claude/auto-resume/queued" "shared-session" 2
 FILE_B=$(find_resume_file "$CWD_B/.claude/auto-resume/queued" "shared-session" 2>/dev/null) || FILE_B=""
 assert_not_empty "$FILE_A" "resume file should exist in CWD_A"
 assert_not_empty "$FILE_B" "resume file should exist in CWD_B"
-if [ -n "$FILE_A" ]; then assert_json_field "$FILE_A" '.prompt' "prompt A"; else TOTAL=$((TOTAL+1)); FAIL=$((FAIL+1)); fi
-if [ -n "$FILE_B" ]; then assert_json_field "$FILE_B" '.prompt' "prompt B"; else TOTAL=$((TOTAL+1)); FAIL=$((FAIL+1)); fi
+if [ -n "$FILE_A" ]; then assert_json_field "$FILE_A" '.prev_prompt' "prompt A"; else TOTAL=$((TOTAL+1)); FAIL=$((FAIL+1)); fi
+if [ -n "$FILE_B" ]; then assert_json_field "$FILE_B" '.prev_prompt' "prompt B"; else TOTAL=$((TOTAL+1)); FAIL=$((FAIL+1)); fi
 
 # ─── T91: Rate exactly at boundary (99.5 rounds to 100) → creates schedule ─
 setup_test "T91_rate_boundary_99_5"

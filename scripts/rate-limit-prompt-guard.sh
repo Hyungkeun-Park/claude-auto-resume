@@ -75,7 +75,7 @@ if [ -n "$RESUME_FILE" ]; then
     if [ -n "$EXISTING_SID" ]; then
         PROMPT=$(echo "$INPUT" | jq -r '.prompt // ""')
         if [ -n "$PROMPT" ]; then
-            jq --arg p "$PROMPT" '.prompt = $p' "$RESUME_FILE" > "$RESUME_FILE.tmp" 2>/dev/null \
+            jq --arg p "$PROMPT" '.prev_prompt = $p | .scheduled_prompt = $p' "$RESUME_FILE" > "$RESUME_FILE.tmp" 2>/dev/null \
                 && mv "$RESUME_FILE.tmp" "$RESUME_FILE" || rm -f "$RESUME_FILE.tmp"
             echo "$(date +"%Y-%m-%dT%H:%M:%S%z") PROMPT_UPDATED session=$SESSION_ID new_len=${#PROMPT}" \
                 >> "$HOME/.claude/logs/auto-resume-$(date +%Y-%m-%d).log" 2>/dev/null || true
@@ -122,7 +122,7 @@ jq -n \
     --arg p "$PROMPT" \
     --argjson car "$CURRENT_RATE" \
     --arg src "user_prompt" \
-    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, scheduled_at_human: $sah, prompt: $p, created_at_rate: $car, source: $src}' \
+    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, scheduled_at_human: $sah, prev_prompt: $p, scheduled_prompt: $p, created_at_rate: $car, source: $src}' \
     > "$RESUME_FILE.tmp" && mv "$RESUME_FILE.tmp" "$RESUME_FILE" || rm -f "$RESUME_FILE.tmp"
 
 # 7. Spawn resume process in background
