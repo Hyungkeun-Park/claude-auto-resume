@@ -26,6 +26,12 @@ source "$_LIB"
 
 command -v jq >/dev/null 2>&1 || exit 0
 
+cleanup_markers() {
+    local dir="$RESUME_DIR/subagents/$SESSION_ID"
+    [ -d "$dir" ] && rm -rf "$dir"
+    rmdir "$RESUME_DIR/subagents" 2>/dev/null || true
+}
+
 INPUT=$(cat)
 
 DIAG_LOG="$HOME/.claude/logs/auto-resume-$(date +%Y-%m-%d).log"
@@ -113,6 +119,7 @@ if [ "$FIVE_INT" -lt 100 ] && [ "$SEVEN_INT" -lt 100 ]; then
         CLEARED_RATE=$(jq -r '.created_at_rate // 0' "$RESUME_FILE" 2>/dev/null || echo "0")
         CLEARED_RATE_INT=$(printf '%.0f' "$CLEARED_RATE" 2>/dev/null || echo 0)
         rm -f "$RESUME_FILE"
+        cleanup_markers
         for _pid in $(pgrep -f "claude-auto-resume" 2>/dev/null || true); do
             _pcmd=$(ps -o args= -p "$_pid" 2>/dev/null || true)
             [ -n "$_pcmd" ] && echo "$_pcmd" | grep -q "$SESSION_ID" && kill "$_pid" 2>/dev/null || true
@@ -126,6 +133,8 @@ if [ "$FIVE_INT" -lt 100 ] && [ "$SEVEN_INT" -lt 100 ]; then
                 >> "$HOME/.claude/logs/auto-resume-$(date +%Y-%m-%d).log"
         fi
         echo "✅ Rate recovered. Auto-resume cleared." >&2
+    else
+        cleanup_markers
     fi
     exit 0
 fi
@@ -175,6 +184,7 @@ if [ "$EVENT" = "Stop" ] && [ -n "$RESUME_FILE" ]; then
             if [ "$FILE_SOURCE" != "stop_failure" ]; then
                 # Turn completed at 100% + schedule was created at 100% → overuse confirmed
                 rm -f "$RESUME_FILE"
+                cleanup_markers
                 for _pid in $(pgrep -f "claude-auto-resume" 2>/dev/null || true); do
                     _pcmd=$(ps -o args= -p "$_pid" 2>/dev/null || true)
                     [ -n "$_pcmd" ] && echo "$_pcmd" | grep -q "$SESSION_ID" && kill "$_pid" 2>/dev/null || true
