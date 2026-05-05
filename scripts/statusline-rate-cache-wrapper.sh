@@ -37,7 +37,7 @@ CONF="$HOME/.claude/statusline-inner.conf"
 if [ -f "$CONF" ]; then
     INNER_CMD=$(cat "$CONF")
     if [ -n "$INNER_CMD" ]; then
-        echo "$INPUT" | $INNER_CMD
+        echo "$INPUT" | bash -c "$INNER_CMD"
         exit $?
     fi
 fi

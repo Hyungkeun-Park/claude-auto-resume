@@ -65,6 +65,7 @@ archive_resume_file() {
     local result=$1
     local reason=${2:-""}
     [ -z "$RESUME_FILE" ] && return 0
+    [ -L "$RESUME_FILE" ] && { rm -f "$RESUME_FILE"; return 0; }
     [ ! -f "$RESUME_FILE" ] && return 0
 
     local dest_dir

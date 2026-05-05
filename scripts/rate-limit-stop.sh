@@ -197,6 +197,7 @@ else
 fi
 
 # ── 8. My file exists → update prompt and resume_at (if valid JSON) ──
+[ -n "$RESUME_FILE" ] && [ -L "$RESUME_FILE" ] && rm -f "$RESUME_FILE" && RESUME_FILE=""
 if [ -n "$RESUME_FILE" ]; then
     EXISTING_SID=$(jq -r '.session_id // empty' "$RESUME_FILE" 2>/dev/null || echo "")
     if [ -n "$EXISTING_SID" ]; then
@@ -213,6 +214,7 @@ fi
 
 # ── 9. No file → create with fixed prompt + spawn resume process ──
 RESUME_FILE=$(new_resume_filename "$QUEUED_DIR" "$SESSION_ID")
+[ -L "$RESUME_FILE" ] && rm -f "$RESUME_FILE"
 jq -n \
     --arg sid "$SESSION_ID" \
     --argjson rat "$RESUME_AT" \

@@ -67,6 +67,7 @@ SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // ""')
 RESUME_DIR="$CWD/.claude/auto-resume"
 QUEUED_DIR="$RESUME_DIR/queued"
 RESUME_FILE=$(find_resume_file "$QUEUED_DIR" "$SESSION_ID") || RESUME_FILE=""
+[ -n "$RESUME_FILE" ] && [ -L "$RESUME_FILE" ] && rm -f "$RESUME_FILE" && RESUME_FILE=""
 
 # My schedule already exists — update prompt with user's latest intent
 if [ -n "$RESUME_FILE" ]; then
@@ -111,6 +112,7 @@ CURRENT_RATE=$(echo "$FIVE_PCT $SEVEN_PCT" | awk '{print ($1 > $2) ? $1 : $2}')
 
 mkdir -p "$QUEUED_DIR"
 RESUME_FILE=$(new_resume_filename "$QUEUED_DIR" "$SESSION_ID")
+[ -L "$RESUME_FILE" ] && rm -f "$RESUME_FILE"
 jq -n \
     --arg sid "$SESSION_ID" \
     --argjson rat "$RESUME_AT" \
