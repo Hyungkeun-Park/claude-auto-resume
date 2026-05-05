@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Stop hook: manage auto-resume schedule based on rate limit state.
 #
-# Each session manages its own file in <project>/.claude/auto-resume/queued/<session-id>.json
+# Each session manages its own file in <project>/.claude/auto-resume/queued/yymmdd-hhmmss-<session-id>.json
 #
 # State machine (for MY session only):
 # - rate 100% + my file doesn't exist → create (fixed prompt, spawn resume)
@@ -14,11 +14,15 @@
 # - SubagentStop deletes marker (before cache check, so stale cache won't skip it)
 # - Stop checks for surviving markers → skips overuse detection if any exist
 #
-# Cancel: rm <project>/.claude/auto-resume/queued/<session-id>.json
+# Cancel: rm <project>/.claude/auto-resume/queued/*-<session-id>.json
 # Cancel all: rm -rf <project>/.claude/auto-resume/queued/
 
 set -euo pipefail
 umask 077
+
+_LIB="${BASH_SOURCE[0]%/*}/lib-resume-file.sh"
+[ -f "$_LIB" ] || _LIB="$HOME/.claude/hooks/lib-resume-file.sh"
+source "$_LIB"
 
 command -v jq >/dev/null 2>&1 || exit 0
 
@@ -54,7 +58,7 @@ fi
 
 RESUME_DIR="$CWD/.claude/auto-resume"
 QUEUED_DIR="$RESUME_DIR/queued"
-RESUME_FILE="$QUEUED_DIR/${SESSION_ID}.json"
+RESUME_FILE=$(find_resume_file "$QUEUED_DIR" "$SESSION_ID") || RESUME_FILE=""
 
 # ── 0b. SubagentStop: delete marker unconditionally (before cache check) ──
 if [ "$EVENT" = "SubagentStop" ]; then
@@ -103,8 +107,8 @@ _diag "RATE" "five=${FIVE_PCT}% seven=${SEVEN_PCT}% cache_age=${CACHE_AGE}s"
 
 # ── 5. Rate < 100%: clean up MY schedule if exists ──
 if [ "$FIVE_INT" -lt 100 ] && [ "$SEVEN_INT" -lt 100 ]; then
-    _diag "BELOW100" "event=$EVENT five=${FIVE_INT}% seven=${SEVEN_INT}% file_exists=$([ -f "$RESUME_FILE" ] && echo Y || echo N)"
-    if [ -f "$RESUME_FILE" ]; then
+    _diag "BELOW100" "event=$EVENT five=${FIVE_INT}% seven=${SEVEN_INT}% file_exists=$([ -n "$RESUME_FILE" ] && echo Y || echo N)"
+    if [ -n "$RESUME_FILE" ]; then
         CLEARED_SOURCE=$(jq -r '.source // ""' "$RESUME_FILE" 2>/dev/null || echo "")
         CLEARED_RATE=$(jq -r '.created_at_rate // 0' "$RESUME_FILE" 2>/dev/null || echo "0")
         CLEARED_RATE_INT=$(printf '%.0f' "$CLEARED_RATE" 2>/dev/null || echo 0)
@@ -140,14 +144,14 @@ fi
 # Too far in the future (>8 hours) — skip
 [ $((RESUME_AT - NOW)) -gt 28800 ] && exit 0
 
-RESUME_DATE=$(date -d "@$RESUME_AT" +"%Y-%m-%dT%H:%M:%S%z" 2>/dev/null || date -r "$RESUME_AT" +"%Y-%m-%dT%H:%M:%S%z" 2>/dev/null || echo "$RESUME_AT")
+RESUME_DATE=$(human_ts "$RESUME_AT")
 FIXED_PROMPT="If any agents failed in the previous task, do not perform their work directly — re-launch the same agents. If it was not an agent failure, continue with the remaining work."
 
 mkdir -p "$QUEUED_DIR"
 mkdir -p "$HOME/.claude/logs"
 
 # ── 7. Overuse detection: Stop only (not SubagentStop) ──
-if [ "$EVENT" = "Stop" ] && [ -f "$RESUME_FILE" ]; then
+if [ "$EVENT" = "Stop" ] && [ -n "$RESUME_FILE" ]; then
     # G16 fix: surviving subagent markers mean a rate-limited subagent hasn't
     # fired SubagentStop yet — skip overuse detection to preserve the schedule
     MARKER_DIR="$RESUME_DIR/subagents/$SESSION_ID"
@@ -193,7 +197,7 @@ else
 fi
 
 # ── 8. My file exists → update prompt and resume_at (if valid JSON) ──
-if [ -f "$RESUME_FILE" ]; then
+if [ -n "$RESUME_FILE" ]; then
     EXISTING_SID=$(jq -r '.session_id // empty' "$RESUME_FILE" 2>/dev/null || echo "")
     if [ -n "$EXISTING_SID" ]; then
         jq --arg p "$FIXED_PROMPT" --argjson rat "$RESUME_AT" --arg rah "$RESUME_DATE" --arg src "$SOURCE" --argjson car "$CURRENT_RATE" \
@@ -208,15 +212,17 @@ if [ -f "$RESUME_FILE" ]; then
 fi
 
 # ── 9. No file → create with fixed prompt + spawn resume process ──
+RESUME_FILE=$(new_resume_filename "$QUEUED_DIR" "$SESSION_ID")
 jq -n \
     --arg sid "$SESSION_ID" \
     --argjson rat "$RESUME_AT" \
     --arg rah "$RESUME_DATE" \
     --argjson sat "$NOW" \
+    --arg sah "$(human_ts "$NOW")" \
     --arg p "$FIXED_PROMPT" \
     --argjson car "$CURRENT_RATE" \
     --arg src "$SOURCE" \
-    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, prompt: $p, created_at_rate: $car, source: $src}' \
+    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, scheduled_at_human: $sah, prompt: $p, created_at_rate: $car, source: $src}' \
     > "$RESUME_FILE.tmp" && mv "$RESUME_FILE.tmp" "$RESUME_FILE" || rm -f "$RESUME_FILE.tmp"
 
 nohup bash "$HOME/.claude/bin/claude-auto-resume.sh" "$SESSION_ID" "$RESUME_AT" "$CWD" \

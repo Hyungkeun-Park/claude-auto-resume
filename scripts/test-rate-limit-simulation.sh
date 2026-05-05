@@ -147,7 +147,13 @@ setup_test() {
 }
 
 resume_file_for() {
-    echo "$RESUME_DIR/queued/$1.json"
+    # Find existing file (timestamped or legacy format)
+    local f
+    f=$(ls "$RESUME_DIR/queued"/*"-${1}.json" 2>/dev/null | head -1)
+    [ -n "$f" ] && [ -f "$f" ] && echo "$f" && return 0
+    [ -f "$RESUME_DIR/queued/${1}.json" ] && echo "$RESUME_DIR/queued/${1}.json" && return 0
+    # Not found — return legacy path (for assert_file_not_exists and manual writes)
+    echo "$RESUME_DIR/queued/${1}.json"
 }
 
 write_cache() {
@@ -322,7 +328,7 @@ assert_json_field "$(resume_file_for sess-008)" '.session_id' "sess-008"
 assert_json_field "$(resume_file_for sess-008)" '.prompt' "my actual prompt"
 assert_stderr_contains "$TEST_DIR/stderr_out" "Auto-resume scheduled"
 
-# ─── T09: Prompt guard, same session already scheduled → skip ───────────────
+# ─── T09: Prompt guard, same session already scheduled → updates prompt ────────
 setup_test "T09_guard_already_scheduled"
 write_cache 100 57
 mkdir -p "$RESUME_DIR/queued"
@@ -332,8 +338,8 @@ jq -n --arg sid "sess-009" --argjson rat "$FUTURE" --arg rah "$FUTURE_DATE" \
     > "$(resume_file_for sess-009)"
 EXIT=$(run_prompt_guard "$(make_hook_input "sess-009" "$TEST_CWD" "new prompt")")
 assert_exit_code "$EXIT" 0
-assert_json_field "$(resume_file_for sess-009)" '.prompt' "old prompt"
-assert_stderr_contains "$TEST_DIR/stderr_out" "already scheduled"
+assert_json_field "$(resume_file_for sess-009)" '.prompt' "new prompt"
+assert_stderr_contains "$TEST_DIR/stderr_out" "prompt updated"
 
 # ─── T10: Prompt guard, different session → creates new file ────────────────
 setup_test "T10_guard_different_session"
@@ -1303,10 +1309,12 @@ assert_exit_code "$EXIT" 0
 EXIT=$(run_prompt_guard "$(make_hook_input "shared-session" "$CWD_B" "prompt B")")
 assert_exit_code "$EXIT" 0
 # Same session_id, different CWDs → two separate files
-assert_file_exists "$CWD_A/.claude/auto-resume/queued/shared-session.json"
-assert_file_exists "$CWD_B/.claude/auto-resume/queued/shared-session.json"
-assert_json_field "$CWD_A/.claude/auto-resume/queued/shared-session.json" '.prompt' "prompt A"
-assert_json_field "$CWD_B/.claude/auto-resume/queued/shared-session.json" '.prompt' "prompt B"
+RESUME_A=$(ls "$CWD_A/.claude/auto-resume/queued"/*"-shared-session.json" 2>/dev/null | head -1)
+RESUME_B=$(ls "$CWD_B/.claude/auto-resume/queued"/*"-shared-session.json" 2>/dev/null | head -1)
+assert_file_exists "$RESUME_A"
+assert_file_exists "$RESUME_B"
+assert_json_field "$RESUME_A" '.prompt' "prompt A"
+assert_json_field "$RESUME_B" '.prompt' "prompt B"
 
 # ─── T91: Rate exactly at boundary (99.5 rounds to 100) → creates schedule ─
 setup_test "T91_rate_boundary_99_5"

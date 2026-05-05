@@ -39,6 +39,7 @@ Copy scripts from this skill's `scripts/` directory. Read each file, then write 
 
 | Source (read from skill dir) | Target | chmod |
 |------------------------------|--------|-------|
+| `scripts/lib-resume-file.sh` | `~/.claude/hooks/lib-resume-file.sh` | +x |
 | `scripts/rate-limit-stop.sh` | `~/.claude/hooks/rate-limit-stop.sh` | +x |
 | `scripts/rate-limit-stop-failure.sh` | `~/.claude/hooks/rate-limit-stop-failure.sh` | +x |
 | `scripts/rate-limit-prompt-guard.sh` | `~/.claude/hooks/rate-limit-prompt-guard.sh` | +x |
