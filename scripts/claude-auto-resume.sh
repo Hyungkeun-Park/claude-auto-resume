@@ -2,7 +2,7 @@
 # Resume executor: wait until rate limit resets, then resume the session.
 # Usage: claude-auto-resume.sh <session_id> <resume_epoch> <cwd>
 #
-# State file: <cwd>/.claude/auto-resume/queued/<session_id>.json
+# State file: <cwd>/.claude/auto-resume/queued/yymmdd-hhmmss-<session_id>.json
 # Cancellation: delete the state file (checked every 60 seconds)
 #
 # Resume strategies:
@@ -11,6 +11,11 @@
 
 set -uo pipefail
 umask 077
+
+_LIB="${BASH_SOURCE[0]%/*}/../hooks/lib-resume-file.sh"
+[ -f "$_LIB" ] || _LIB="${BASH_SOURCE[0]%/*}/lib-resume-file.sh"
+[ -f "$_LIB" ] || _LIB="$HOME/.claude/hooks/lib-resume-file.sh"
+source "$_LIB"
 
 SESSION_ID="$1"
 TARGET_EPOCH="$2"
@@ -30,7 +35,7 @@ RESUME_DIR="$CWD/.claude/auto-resume"
 QUEUED_DIR="$RESUME_DIR/queued"
 SUCCESS_DIR="$RESUME_DIR/success"
 FAILED_DIR="$RESUME_DIR/failed"
-RESUME_FILE="$QUEUED_DIR/${SESSION_ID}.json"
+RESUME_FILE=$(find_resume_file "$QUEUED_DIR" "$SESSION_ID") || RESUME_FILE=""
 CACHE="$HOME/.claude/rate-limits.json"
 MAX_RETRIES=5
 STALE_THRESHOLD=300
@@ -59,6 +64,7 @@ cleanup_old_logs() {
 archive_resume_file() {
     local result=$1
     local reason=${2:-""}
+    [ -z "$RESUME_FILE" ] && return 0
     [ ! -f "$RESUME_FILE" ] && return 0
 
     local dest_dir
@@ -69,12 +75,13 @@ archive_resume_file() {
     fi
     mkdir -p "$dest_dir"
 
-    local completed_at
-    completed_at=$(date +"%Y-%m-%dT%H:%M:%S%z")
+    local completed_at basename
+    completed_at=$(human_ts)
+    basename=$(basename "$RESUME_FILE")
     jq --arg r "$result" --arg reason "$reason" --arg cat "$completed_at" \
         --arg err "$RESUME_ERROR_OUTPUT" \
         '. + {result: $r, reason: $reason, completed_at: $cat} | if $err != "" then . + {error_output: $err} else . end' \
-        "$RESUME_FILE" > "$RESUME_FILE.tmp" 2>/dev/null && mv "$RESUME_FILE.tmp" "$dest_dir/${SESSION_ID}.json"
+        "$RESUME_FILE" > "$RESUME_FILE.tmp" 2>/dev/null && mv "$RESUME_FILE.tmp" "$dest_dir/$basename"
     rm -f "$RESUME_FILE" "$RESUME_FILE.tmp"
 }
 
@@ -151,7 +158,7 @@ resume_via_print() {
     return $exit_code
 }
 
-TARGET_HUMAN=$(date -d "@$TARGET_EPOCH" +"%Y-%m-%dT%H:%M:%S%z" 2>/dev/null || date -r "$TARGET_EPOCH" +"%Y-%m-%dT%H:%M:%S%z" 2>/dev/null || echo "$TARGET_EPOCH")
+TARGET_HUMAN=$(human_ts "$TARGET_EPOCH")
 
 # ── 0. Kill any existing daemon for this session (prevent duplicates) ──
 for old_pid in $(pgrep -f "claude-auto-resume" 2>/dev/null || true); do
@@ -164,6 +171,12 @@ for old_pid in $(pgrep -f "claude-auto-resume" 2>/dev/null || true); do
 done
 
 cleanup_old_logs
+
+# If file not found at startup, exit
+if [ -z "$RESUME_FILE" ]; then
+    log "NO_FILE session=$SESSION_ID reason=file_not_found_at_start"
+    exit 1
+fi
 
 # ── 1. Wall-clock polling (handles machine sleep correctly) ──
 log "WAITING session=$SESSION_ID target=$TARGET_HUMAN"

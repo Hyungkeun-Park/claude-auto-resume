@@ -2,17 +2,21 @@
 # StopFailure hook: schedule auto-resume when API error ends the turn.
 # Fallback for cases where Stop hook didn't fire (e.g., API-level rate limit error).
 #
-# Each session manages its own file in <project>/.claude/auto-resume/queued/<session-id>.json
+# Each session manages its own file in <project>/.claude/auto-resume/queued/yymmdd-hhmmss-<session-id>.json
 #
 # Logic:
 # - rate < 100% → nothing
-# - rate 100% + my file exists → skip
+# - rate 100% + my file exists → lock source to stop_failure
 # - rate 100% + no file for me → create + spawn
 #
-# Cancel: rm <project>/.claude/auto-resume/queued/<session-id>.json
+# Cancel: rm <project>/.claude/auto-resume/queued/*-<session-id>.json
 
 set -euo pipefail
 umask 077
+
+_LIB="${BASH_SOURCE[0]%/*}/lib-resume-file.sh"
+[ -f "$_LIB" ] || _LIB="$HOME/.claude/hooks/lib-resume-file.sh"
+source "$_LIB"
 
 command -v jq >/dev/null 2>&1 || exit 0
 
@@ -63,10 +67,10 @@ SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // ""')
 
 RESUME_DIR="$CWD/.claude/auto-resume"
 QUEUED_DIR="$RESUME_DIR/queued"
-RESUME_FILE="$QUEUED_DIR/${SESSION_ID}.json"
+RESUME_FILE=$(find_resume_file "$QUEUED_DIR" "$SESSION_ID") || RESUME_FILE=""
 
 # Already scheduled for this session → lock source to stop_failure
-if [ -f "$RESUME_FILE" ]; then
+if [ -n "$RESUME_FILE" ]; then
     EXISTING_SID=$(jq -r '.session_id // empty' "$RESUME_FILE" 2>/dev/null || echo "")
     if [ -n "$EXISTING_SID" ]; then
         jq '.source = "stop_failure"' "$RESUME_FILE" > "$RESUME_FILE.tmp" 2>/dev/null && mv "$RESUME_FILE.tmp" "$RESUME_FILE" || rm -f "$RESUME_FILE.tmp"
@@ -94,19 +98,21 @@ fi
 [ $((RESUME_AT - NOW)) -gt 28800 ] && exit 0
 
 # 6. Create schedule
-RESUME_DATE=$(date -d "@$RESUME_AT" +"%Y-%m-%dT%H:%M:%S%z" 2>/dev/null || date -r "$RESUME_AT" +"%Y-%m-%dT%H:%M:%S%z" 2>/dev/null || echo "$RESUME_AT")
+RESUME_DATE=$(human_ts "$RESUME_AT")
 CURRENT_RATE=$(echo "$FIVE_PCT $SEVEN_PCT" | awk '{print ($1 > $2) ? $1 : $2}')
 
 mkdir -p "$QUEUED_DIR"
+RESUME_FILE=$(new_resume_filename "$QUEUED_DIR" "$SESSION_ID")
 jq -n \
     --arg sid "$SESSION_ID" \
     --argjson rat "$RESUME_AT" \
     --arg rah "$RESUME_DATE" \
     --argjson sat "$NOW" \
+    --arg sah "$(human_ts "$NOW")" \
     --arg p "If any agents failed in the previous task, do not perform their work directly — re-launch the same agents. If it was not an agent failure, continue with the remaining work." \
     --argjson car "$CURRENT_RATE" \
     --arg src "stop_failure" \
-    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, prompt: $p, created_at_rate: $car, source: $src}' \
+    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, scheduled_at_human: $sah, prompt: $p, created_at_rate: $car, source: $src}' \
     > "$RESUME_FILE.tmp" && mv "$RESUME_FILE.tmp" "$RESUME_FILE" || rm -f "$RESUME_FILE.tmp"
 
 # 7. Spawn resume process

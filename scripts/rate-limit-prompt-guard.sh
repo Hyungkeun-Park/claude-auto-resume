@@ -4,13 +4,17 @@
 #
 # Logic:
 # - rate < 100%: do nothing
-# - rate 100% + my schedule exists: skip
+# - rate 100% + my schedule exists: update prompt (user's latest intent)
 # - rate 100% + no schedule for me: create + spawn resume
 #
-# State: <project>/.claude/auto-resume/queued/<session-id>.json (delete to cancel)
+# State: <project>/.claude/auto-resume/queued/yymmdd-hhmmss-<session-id>.json (delete to cancel)
 
 set -euo pipefail
 umask 077
+
+_LIB="${BASH_SOURCE[0]%/*}/lib-resume-file.sh"
+[ -f "$_LIB" ] || _LIB="$HOME/.claude/hooks/lib-resume-file.sh"
+source "$_LIB"
 
 command -v jq >/dev/null 2>&1 || exit 0
 
@@ -62,17 +66,24 @@ SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // ""')
 
 RESUME_DIR="$CWD/.claude/auto-resume"
 QUEUED_DIR="$RESUME_DIR/queued"
-RESUME_FILE="$QUEUED_DIR/${SESSION_ID}.json"
+RESUME_FILE=$(find_resume_file "$QUEUED_DIR" "$SESSION_ID") || RESUME_FILE=""
 
-# My schedule already exists — skip (if valid JSON with session_id)
-if [ -f "$RESUME_FILE" ]; then
+# My schedule already exists — update prompt with user's latest intent
+if [ -n "$RESUME_FILE" ]; then
     EXISTING_SID=$(jq -r '.session_id // empty' "$RESUME_FILE" 2>/dev/null || echo "")
     if [ -n "$EXISTING_SID" ]; then
+        PROMPT=$(echo "$INPUT" | jq -r '.prompt // ""')
+        if [ -n "$PROMPT" ]; then
+            jq --arg p "$PROMPT" '.prompt = $p' "$RESUME_FILE" > "$RESUME_FILE.tmp" 2>/dev/null \
+                && mv "$RESUME_FILE.tmp" "$RESUME_FILE" || rm -f "$RESUME_FILE.tmp"
+            echo "$(date +"%Y-%m-%dT%H:%M:%S%z") PROMPT_UPDATED session=$SESSION_ID new_len=${#PROMPT}" \
+                >> "$HOME/.claude/logs/auto-resume-$(date +%Y-%m-%d).log" 2>/dev/null || true
+        fi
         EXISTING_TIME=$(jq -r '.resume_at_human // "unknown"' "$RESUME_FILE" 2>/dev/null || echo "unknown")
         EXISTING_AT=$(jq -r '.resume_at // 0' "$RESUME_FILE" 2>/dev/null || echo "0")
         EXISTING_INT=$(printf '%.0f' "$EXISTING_AT" 2>/dev/null || echo 0)
         DELTA=$((EXISTING_INT - NOW)); MINS=$((DELTA / 60)); SECS=$((DELTA % 60))
-        echo -e "⏳ Auto-resume already scheduled at $EXISTING_TIME (in ${MINS}m ${SECS}s)\n   State: $RESUME_FILE\n   Cancel: rm $RESUME_FILE" >&2
+        echo -e "⏳ Auto-resume prompt updated (resume at $EXISTING_TIME, in ${MINS}m ${SECS}s)\n   State: $RESUME_FILE\n   Cancel: rm $RESUME_FILE" >&2
         exit 0
     fi
     # File exists but corrupted/empty — will overwrite below
@@ -93,21 +104,23 @@ fi
 [ $((RESUME_AT - NOW)) -gt 28800 ] && exit 0
 
 # 6. Create schedule with user's actual prompt (safe JSON via jq)
-RESUME_DATE=$(date -d "@$RESUME_AT" +"%Y-%m-%dT%H:%M:%S%z" 2>/dev/null || date -r "$RESUME_AT" +"%Y-%m-%dT%H:%M:%S%z" 2>/dev/null || echo "$RESUME_AT")
+RESUME_DATE=$(human_ts "$RESUME_AT")
 PROMPT=$(echo "$INPUT" | jq -r '.prompt // "If any agents failed in the previous task, do not perform their work directly — re-launch the same agents. If it was not an agent failure, continue with the remaining work."')
 
 CURRENT_RATE=$(echo "$FIVE_PCT $SEVEN_PCT" | awk '{print ($1 > $2) ? $1 : $2}')
 
 mkdir -p "$QUEUED_DIR"
+RESUME_FILE=$(new_resume_filename "$QUEUED_DIR" "$SESSION_ID")
 jq -n \
     --arg sid "$SESSION_ID" \
     --argjson rat "$RESUME_AT" \
     --arg rah "$RESUME_DATE" \
     --argjson sat "$NOW" \
+    --arg sah "$(human_ts "$NOW")" \
     --arg p "$PROMPT" \
     --argjson car "$CURRENT_RATE" \
     --arg src "user_prompt" \
-    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, prompt: $p, created_at_rate: $car, source: $src}' \
+    '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, scheduled_at_human: $sah, prompt: $p, created_at_rate: $car, source: $src}' \
     > "$RESUME_FILE.tmp" && mv "$RESUME_FILE.tmp" "$RESUME_FILE" || rm -f "$RESUME_FILE.tmp"
 
 # 7. Spawn resume process in background

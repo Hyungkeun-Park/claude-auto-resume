@@ -16,7 +16,7 @@ Commands:
   /auto-resume uninstall    — remove globally
 
 Cancel a pending resume:
-  rm <project>/.claude/auto-resume/queued/<session-id>.json
+  rm <project>/.claude/auto-resume/queued/*-<session-id>.json
 
 Cancel all pending:
   rm -rf <project>/.claude/auto-resume/queued/
@@ -25,7 +25,7 @@ How it works:
   Rate limit 100% → hook creates schedule → daemon waits → rate recovers → session resumes
   Overuse detection: if a turn completes at 100%, schedule is auto-cancelled (overuse mode)
 
-State files:
+State files (named yymmdd-hhmmss-<session-id>.json):
   <project>/.claude/auto-resume/queued/    — pending schedules
   <project>/.claude/auto-resume/success/   — completed resumes
   <project>/.claude/auto-resume/failed/    — failed resumes (with error_output)
