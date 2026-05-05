@@ -41,9 +41,9 @@ git clone https://github.com/Hyungkeun-Park/claude-auto-resume.git
 cd claude-auto-resume
 bash install.sh
 
-# Option 2: As Claude Code skill
-git clone https://github.com/Hyungkeun-Park/claude-auto-resume.git ~/.claude/skills/auto-resume
-# Then in any Claude Code session:
+# Option 2: As Claude Code skill (clone anywhere)
+git clone https://github.com/Hyungkeun-Park/claude-auto-resume.git
+# Then in any Claude Code session, run:
 /auto-resume setup
 ```
 
