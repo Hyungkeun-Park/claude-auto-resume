@@ -3,6 +3,11 @@
 All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.1.1] - 2026-05-06
+
+### Fixed
+- **Overuse detection too aggressive**: guard-created (`user_prompt`) and subagent-updated (`subagent_stop`) schedules were incorrectly deleted by overuse detection. Narrowed to `source=stop` only — other sources indicate normal rate-limit shutdown, not overuse.
+
 ## [1.1.0] - 2026-05-05
 
 ### Added
