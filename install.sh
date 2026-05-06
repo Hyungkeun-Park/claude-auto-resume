@@ -28,8 +28,20 @@ check_prerequisites() {
     local ok=true
 
     if ! command -v jq >/dev/null 2>&1; then
-        error "jq is required but not installed. Install with: apt install jq / brew install jq"
-        ok=false
+        info "jq not found. Attempting to install..."
+        if command -v apt-get >/dev/null 2>&1; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq jq >/dev/null 2>&1 && ok "jq installed via apt"
+        elif command -v brew >/dev/null 2>&1; then
+            brew install jq >/dev/null 2>&1 && ok "jq installed via brew"
+        elif command -v yum >/dev/null 2>&1; then
+            sudo yum install -y jq >/dev/null 2>&1 && ok "jq installed via yum"
+        elif command -v apk >/dev/null 2>&1; then
+            sudo apk add jq >/dev/null 2>&1 && ok "jq installed via apk"
+        fi
+        if ! command -v jq >/dev/null 2>&1; then
+            error "Failed to install jq automatically. Install manually: apt install jq / brew install jq"
+            ok=false
+        fi
     fi
 
     local bash_version
