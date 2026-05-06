@@ -194,11 +194,11 @@ if [ "$EVENT" = "Stop" ] && [ -n "$RESUME_FILE" ]; then
         FILE_SOURCE=$(jq -r '.source // ""' "$RESUME_FILE" 2>/dev/null || echo "")
         CREATED_INT=$(printf '%.0f' "$CREATED_RATE" 2>/dev/null || echo 0)
 
-        if [ "$CREATED_INT" -ge 100 ] && [ "$FILE_SOURCE" != "stop_failure" ]; then
+        if [ "$CREATED_INT" -ge 100 ] && [ "$FILE_SOURCE" = "stop" ]; then
             # Re-read source to close TOCTOU window (StopFailure may have locked it between reads)
             FILE_SOURCE=$(jq -r '.source // ""' "$RESUME_FILE" 2>/dev/null || echo "")
-            if [ "$FILE_SOURCE" != "stop_failure" ]; then
-                # Turn completed at 100% + schedule was created at 100% → overuse confirmed
+            if [ "$FILE_SOURCE" = "stop" ]; then
+                # Stop-created schedule + another turn completed at 100% → overuse confirmed
                 rm -f "$RESUME_FILE"
                 cleanup_markers
                 for _pid in $(pgrep -f "claude-auto-resume" 2>/dev/null || true); do
