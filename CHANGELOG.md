@@ -3,6 +3,25 @@
 All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.2.0] - 2026-05-10
+
+### Added
+- **Prompt side file**: UPS hook always saves user's prompt to `prompts/<session-id>.prompt` regardless of rate status, so Stop/StopFailure hooks can recover it when rate limit hits mid-conversation.
+- Prompt selection logic in Stop/StopFailure: when no subagent markers exist, use saved user prompt; when subagent markers exist, use fixed agent-relaunch prompt.
+- Enhanced diagnostic logging: `PROMPT_SAVED` (UPS), `PROMPT_SELECTED` (Stop/StopFailure) log entries with source attribution (`saved_user_prompt` vs `fixed`) and marker state.
+- `prompt_side_file()` helper in `lib-resume-file.sh`.
+- 11 new test cases (T97-T107) covering prompt side file save, read, cleanup, marker-based selection, logging, and backward compatibility.
+- Gotcha G18: Stop/StopFailure hooks lack user prompt — side file bridges the gap.
+
+### Fixed
+- **Mid-conversation rate limit loses user prompt**: When rate limit hit 100% during a turn (not at submission), Stop/StopFailure hooks used a hardcoded generic prompt instead of the user's original prompt.
+- **install.sh jq 1.6 compatibility**: Hook registration used `$` root reference unsupported in jq 1.6, silently failing to register hooks in `settings.json`.
+- Test T44/T60/T66: Updated to match v1.1.1 overuse narrowing (`source=stop` only).
+
+### Changed
+- UPS hook restructured: CWD/SESSION_ID extraction moved before rate gate to enable prompt saving at all rates.
+- Stop hook cleans up prompt side file on rate recovery.
+
 ## [1.1.1] - 2026-05-06
 
 ### Fixed

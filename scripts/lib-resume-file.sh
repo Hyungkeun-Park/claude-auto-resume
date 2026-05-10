@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Shared helpers for auto-resume file management.
 # Sourced by hook scripts and the resume daemon.
+# TODO: Add node -e fallback for jq-less environments (jq → node JSON wrapper)
 
 # Find existing resume file for a session in a directory.
 # Supports timestamped (yymmdd-hhmmss-<sid>.json) and legacy (<sid>.json) formats.
@@ -23,6 +24,12 @@ new_resume_filename() {
 # Human-readable timestamp (no T separator, no timezone).
 # Usage: human_ts → "2026-05-04 17:10:00"
 #        human_ts "$epoch" → from epoch
+# Side file path for saved user prompt.
+prompt_side_file() {
+    local resume_dir=$1 sid=$2
+    echo "$resume_dir/prompts/${sid}.prompt"
+}
+
 human_ts() {
     if [ -n "${1:-}" ]; then
         date -d "@$1" +"%Y-%m-%d %H:%M:%S" 2>/dev/null \

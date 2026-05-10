@@ -148,6 +148,19 @@ Hooks registered: Stop, SubagentStop, StopFailure, UserPromptSubmit
 Run /auto-resume for help, or /auto-resume status to see dashboard.
 ```
 
+## Modification Notes
+
+When modifying the hook scripts, keep these cross-file dependencies in mind:
+
+| Change | Files to update |
+|--------|----------------|
+| Prompt side file path or format | `lib-resume-file.sh` (`prompt_side_file()`), `rate-limit-prompt-guard.sh` (write), `rate-limit-stop.sh` (read + cleanup), `rate-limit-stop-failure.sh` (read) |
+| Resume file JSON schema (new/renamed fields) | All 3 hook scripts + `claude-auto-resume.sh` (daemon reads `scheduled_prompt`) + tests |
+| Overuse detection logic | `rate-limit-stop.sh` (section 7) — check `source` field values, subagent marker interaction |
+| Subagent marker directory structure | `rate-limit-subagent-start.sh`, `rate-limit-stop.sh` (overuse skip + prompt selection), `rate-limit-stop-failure.sh` (prompt selection) |
+| Prompt selection logic (saved vs fixed) | `rate-limit-stop.sh` (section 7b), `rate-limit-stop-failure.sh` (section 6) — both must use same decision: markers → fixed, no markers → saved |
+| Cleanup paths (rate recovery) | `rate-limit-stop.sh` (section 5) — must clean resume file, prompt side file, markers |
+
 ## Enable
 
 Re-enable auto-resume for the current project.

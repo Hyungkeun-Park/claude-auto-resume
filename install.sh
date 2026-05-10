@@ -121,7 +121,7 @@ merge_settings() {
         # Add the hook
         local hook_entry
         hook_entry=$(jq -n --arg cmd "$cmd" '[{"matcher": "", "hooks": [{"type": "command", "command": $cmd}]}]')
-        settings_data=$(echo "$settings_data" | jq --argjson entry "$hook_entry" ".hooks.${event} = (\$.hooks.${event} // []) + \$entry")
+        settings_data=$(echo "$settings_data" | jq --argjson entry "$hook_entry" "if .hooks.${event} then .hooks.${event} += \$entry else .hooks.${event} = \$entry end")
     done
 
     # Configure statusline wrapper if not already set

@@ -20,41 +20,10 @@ command -v jq >/dev/null 2>&1 || exit 0
 
 INPUT=$(cat)
 
-# 1. Read rate limit cache
-CACHE="$HOME/.claude/rate-limits.json"
-if [ ! -f "$CACHE" ]; then
-    if ! jq -r '.statusLine.command // ""' "$HOME/.claude/settings.json" 2>/dev/null | grep -q "statusline-rate-cache-wrapper"; then
-        echo "⚠️ Auto-resume: statusline not configured. Run /setup-auto-resume to set up." >&2
-    fi
-    exit 0
-fi
-DATA=$(jq '.' "$CACHE" 2>/dev/null) || exit 0
-
-# 2. Check rate limits (before freshness gate — needed for stale-but-at-limit logic)
-FIVE_PCT=$(echo "$DATA" | jq -r '.rate_limits.five_hour.used_percentage // 0')
-FIVE_RESET=$(echo "$DATA" | jq -r '.rate_limits.five_hour.resets_at // 0')
-SEVEN_PCT=$(echo "$DATA" | jq -r '.rate_limits.seven_day.used_percentage // 0')
-SEVEN_RESET=$(echo "$DATA" | jq -r '.rate_limits.seven_day.resets_at // 0')
-
-FIVE_INT=$(printf '%.0f' "$FIVE_PCT" 2>/dev/null || echo 0)
-SEVEN_INT=$(printf '%.0f' "$SEVEN_PCT" 2>/dev/null || echo 0)
-
-# 3. Freshness + rate gate
-# Rate only resets downward — stale cache at ≥100% is still valid for scheduling
-LAST_UPDATED=$(echo "$DATA" | jq -r '.last_updated // 0')
-NOW=$(date +%s)
-if [ $((NOW - LAST_UPDATED)) -gt 300 ] && [ "$FIVE_INT" -lt 100 ] && [ "$SEVEN_INT" -lt 100 ]; then
-    exit 0
-fi
-
-# Rate not at limit — nothing to do
-[ "$FIVE_INT" -lt 100 ] && [ "$SEVEN_INT" -lt 100 ] && exit 0
-
-# 4. Identify session and project
+# 1. Identify session and project (before rate gate — needed for prompt side file)
 CWD=$(echo "$INPUT" | jq -r '.cwd // ""')
 [ -z "$CWD" ] && exit 0
 
-# Project-level opt-out
 CONF="$CWD/.claude/auto-resume.conf"
 if [ -f "$CONF" ] && grep -qi "^enabled=false" "$CONF" 2>/dev/null; then
     exit 0
@@ -65,6 +34,51 @@ SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // ""')
 [[ ! "$SESSION_ID" =~ ^[a-zA-Z0-9._-]+$ ]] && exit 0
 
 RESUME_DIR="$CWD/.claude/auto-resume"
+
+# 2. Always save latest prompt to side file (regardless of rate status)
+PROMPT_RAW=$(echo "$INPUT" | jq -r '.prompt // ""')
+if [ -n "$PROMPT_RAW" ]; then
+    PROMPT_DIR="$RESUME_DIR/prompts"
+    mkdir -p "$PROMPT_DIR"
+    PROMPT_FILE=$(prompt_side_file "$RESUME_DIR" "$SESSION_ID")
+    [ -L "$PROMPT_FILE" ] && rm -f "$PROMPT_FILE"
+    echo "$PROMPT_RAW" > "$PROMPT_FILE.tmp" \
+        && mv "$PROMPT_FILE.tmp" "$PROMPT_FILE" \
+        || rm -f "$PROMPT_FILE.tmp"
+    echo "$(date +"%Y-%m-%dT%H:%M:%S%z") PROMPT_SAVED session=$SESSION_ID len=${#PROMPT_RAW}" \
+        >> "$HOME/.claude/logs/auto-resume-$(date +%Y-%m-%d).log" 2>/dev/null || true
+fi
+
+# 3. Read rate limit cache
+CACHE="$HOME/.claude/rate-limits.json"
+if [ ! -f "$CACHE" ]; then
+    if ! jq -r '.statusLine.command // ""' "$HOME/.claude/settings.json" 2>/dev/null | grep -q "statusline-rate-cache-wrapper"; then
+        echo "⚠️ Auto-resume: statusline not configured. Run /setup-auto-resume to set up." >&2
+    fi
+    exit 0
+fi
+DATA=$(jq '.' "$CACHE" 2>/dev/null) || exit 0
+
+# 4. Check rate limits (before freshness gate — needed for stale-but-at-limit logic)
+FIVE_PCT=$(echo "$DATA" | jq -r '.rate_limits.five_hour.used_percentage // 0')
+FIVE_RESET=$(echo "$DATA" | jq -r '.rate_limits.five_hour.resets_at // 0')
+SEVEN_PCT=$(echo "$DATA" | jq -r '.rate_limits.seven_day.used_percentage // 0')
+SEVEN_RESET=$(echo "$DATA" | jq -r '.rate_limits.seven_day.resets_at // 0')
+
+FIVE_INT=$(printf '%.0f' "$FIVE_PCT" 2>/dev/null || echo 0)
+SEVEN_INT=$(printf '%.0f' "$SEVEN_PCT" 2>/dev/null || echo 0)
+
+# 5. Freshness + rate gate
+# Rate only resets downward — stale cache at ≥100% is still valid for scheduling
+LAST_UPDATED=$(echo "$DATA" | jq -r '.last_updated // 0')
+NOW=$(date +%s)
+if [ $((NOW - LAST_UPDATED)) -gt 300 ] && [ "$FIVE_INT" -lt 100 ] && [ "$SEVEN_INT" -lt 100 ]; then
+    exit 0
+fi
+
+# Rate not at limit — nothing to do (prompt already saved above)
+[ "$FIVE_INT" -lt 100 ] && [ "$SEVEN_INT" -lt 100 ] && exit 0
+
 QUEUED_DIR="$RESUME_DIR/queued"
 RESUME_FILE=$(find_resume_file "$QUEUED_DIR" "$SESSION_ID") || RESUME_FILE=""
 [ -n "$RESUME_FILE" ] && [ -L "$RESUME_FILE" ] && rm -f "$RESUME_FILE" && RESUME_FILE=""

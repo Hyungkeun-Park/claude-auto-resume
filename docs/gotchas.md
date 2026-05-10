@@ -21,6 +21,7 @@ Edge cases and non-obvious behaviors discovered during development. Each entry e
 | G15 | [g15-resume-metadata-absence](gotchas/g15-resume-metadata-absence.md) | Auto-resumed session had no context — prepend wait-time metadata to prompt |
 | G16 | [g16-stale-cache-subagent-overuse-false-positive](gotchas/g16-stale-cache-subagent-overuse-false-positive.md) | Stale cache + overuse false positive defeats subagent auto-resume — marker tracking via SubagentStart |
 | G17 | [g17-stale-cache-freshness-gate-blocks-scheduling](gotchas/g17-stale-cache-freshness-gate-blocks-scheduling.md) | Unconditional freshness gate exits at stale cache even when rate ≥100% — combined freshness+rate gate |
+| G18 | [g18-stop-hooks-lack-user-prompt](gotchas/g18-stop-hooks-lack-user-prompt.md) | Stop/StopFailure hooks don't receive user prompt — side file bridges the gap |
 
 ## Adding New Gotchas
 

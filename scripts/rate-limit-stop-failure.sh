@@ -118,6 +118,29 @@ fi
 RESUME_DATE=$(human_ts "$RESUME_AT")
 CURRENT_RATE=$(echo "$FIVE_PCT $SEVEN_PCT" | awk '{print ($1 > $2) ? $1 : $2}')
 
+# Determine prompt: saved user prompt (no subagent markers) or fixed (agents need relaunch)
+FIXED_PROMPT="If any agents failed in the previous task, do not perform their work directly — re-launch the same agents. If it was not an agent failure, continue with the remaining work."
+SELECTED_PROMPT="$FIXED_PROMPT"
+PROMPT_SOURCE="fixed"
+
+MARKER_DIR="$RESUME_DIR/subagents/$SESSION_ID"
+HAS_MARKERS=false
+if [ -d "$MARKER_DIR" ] && [ -n "$(ls -A "$MARKER_DIR" 2>/dev/null)" ]; then
+    HAS_MARKERS=true
+fi
+
+PROMPT_SIDE_FILE=$(prompt_side_file "$RESUME_DIR" "$SESSION_ID")
+if [ "$HAS_MARKERS" = "false" ] && [ -f "$PROMPT_SIDE_FILE" ] && [ ! -L "$PROMPT_SIDE_FILE" ]; then
+    SAVED_USER_PROMPT=$(cat "$PROMPT_SIDE_FILE" 2>/dev/null || echo "")
+    if [ -n "$SAVED_USER_PROMPT" ]; then
+        SELECTED_PROMPT="$SAVED_USER_PROMPT"
+        PROMPT_SOURCE="saved_user_prompt"
+    fi
+fi
+
+echo "$(date +"%Y-%m-%dT%H:%M:%S%z") PROMPT_SELECTED source=$PROMPT_SOURCE has_markers=$HAS_MARKERS side_file=$([ -f "$PROMPT_SIDE_FILE" ] && echo Y || echo N) session=$SESSION_ID" \
+    >> "$HOME/.claude/logs/auto-resume-$(date +%Y-%m-%d).log" 2>/dev/null || true
+
 mkdir -p "$QUEUED_DIR"
 RESUME_FILE=$(new_resume_filename "$QUEUED_DIR" "$SESSION_ID")
 [ -L "$RESUME_FILE" ] && rm -f "$RESUME_FILE"
@@ -127,7 +150,7 @@ jq -n \
     --arg rah "$RESUME_DATE" \
     --argjson sat "$NOW" \
     --arg sah "$(human_ts "$NOW")" \
-    --arg p "If any agents failed in the previous task, do not perform their work directly — re-launch the same agents. If it was not an agent failure, continue with the remaining work." \
+    --arg p "$SELECTED_PROMPT" \
     --argjson car "$CURRENT_RATE" \
     --arg src "stop_failure" \
     '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, scheduled_at_human: $sah, scheduled_prompt: $p, created_at_rate: $car, source: $src}' \

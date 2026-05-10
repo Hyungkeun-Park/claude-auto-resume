@@ -135,6 +135,8 @@ if [ "$FIVE_INT" -lt 100 ] && [ "$SEVEN_INT" -lt 100 ]; then
         CLEARED_RATE=$(jq -r '.created_at_rate // 0' "$RESUME_FILE" 2>/dev/null || echo "0")
         CLEARED_RATE_INT=$(printf '%.0f' "$CLEARED_RATE" 2>/dev/null || echo 0)
         rm -f "$RESUME_FILE"
+        rm -f "$(prompt_side_file "$RESUME_DIR" "$SESSION_ID")"
+        rmdir "$RESUME_DIR/prompts" 2>/dev/null || true
         cleanup_markers
         for _pid in $(pgrep -f "claude-auto-resume" 2>/dev/null || true); do
             _pcmd=$(ps -o args= -p "$_pid" 2>/dev/null || true)
@@ -151,6 +153,8 @@ if [ "$FIVE_INT" -lt 100 ] && [ "$SEVEN_INT" -lt 100 ]; then
         echo "✅ Rate recovered. Auto-resume cleared." >&2
     else
         cleanup_markers
+        rm -f "$(prompt_side_file "$RESUME_DIR" "$SESSION_ID")"
+        rmdir "$RESUME_DIR/prompts" 2>/dev/null || true
     fi
     exit 0
 fi
@@ -222,12 +226,30 @@ else
     SOURCE="subagent_stop"
 fi
 
+# ── 7b. Determine prompt: saved user prompt or fixed (subagent relaunch) ──
+SELECTED_PROMPT="$FIXED_PROMPT"
+PROMPT_SOURCE="fixed"
+PROMPT_SIDE_FILE=$(prompt_side_file "$RESUME_DIR" "$SESSION_ID")
+MARKER_DIR_PROMPT="$RESUME_DIR/subagents/$SESSION_ID"
+HAS_MARKERS_PROMPT=false
+if [ -d "$MARKER_DIR_PROMPT" ] && [ -n "$(ls -A "$MARKER_DIR_PROMPT" 2>/dev/null)" ]; then
+    HAS_MARKERS_PROMPT=true
+fi
+if [ "$HAS_MARKERS_PROMPT" = "false" ] && [ -f "$PROMPT_SIDE_FILE" ] && [ ! -L "$PROMPT_SIDE_FILE" ]; then
+    SAVED_USER_PROMPT=$(cat "$PROMPT_SIDE_FILE" 2>/dev/null || echo "")
+    if [ -n "$SAVED_USER_PROMPT" ]; then
+        SELECTED_PROMPT="$SAVED_USER_PROMPT"
+        PROMPT_SOURCE="saved_user_prompt"
+    fi
+fi
+_diag "PROMPT_SELECTED" "source=$PROMPT_SOURCE has_markers=$HAS_MARKERS_PROMPT side_file=$([ -f "$PROMPT_SIDE_FILE" ] && echo Y || echo N)"
+
 # ── 8. My file exists → update scheduled_prompt and resume_at (if valid JSON) ──
 [ -n "$RESUME_FILE" ] && [ -L "$RESUME_FILE" ] && rm -f "$RESUME_FILE" && RESUME_FILE=""
 if [ -n "$RESUME_FILE" ]; then
     EXISTING_SID=$(jq -r '.session_id // empty' "$RESUME_FILE" 2>/dev/null || echo "")
     if [ -n "$EXISTING_SID" ]; then
-        jq --arg p "$FIXED_PROMPT" --argjson rat "$RESUME_AT" --arg rah "$RESUME_DATE" --arg src "$SOURCE" --argjson car "$CURRENT_RATE" \
+        jq --arg p "$SELECTED_PROMPT" --argjson rat "$RESUME_AT" --arg rah "$RESUME_DATE" --arg src "$SOURCE" --argjson car "$CURRENT_RATE" \
             '.scheduled_prompt = $p | .resume_at = $rat | .resume_at_human = $rah | .created_at_rate = $car | .source = (if .source == "stop_failure" then "stop_failure" else $src end)' \
             "$RESUME_FILE" > "$RESUME_FILE.tmp" 2>/dev/null && mv "$RESUME_FILE.tmp" "$RESUME_FILE" || rm -f "$RESUME_FILE.tmp"
         DELTA=$((RESUME_AT - NOW)); MINS=$((DELTA / 60)); SECS=$((DELTA % 60))
@@ -239,7 +261,7 @@ if [ -n "$RESUME_FILE" ]; then
     rm -f "$RESUME_FILE"
 fi
 
-# ── 9. No file → create with fixed prompt + spawn resume process ──
+# ── 9. No file → create with selected prompt + spawn resume process ──
 RESUME_FILE=$(new_resume_filename "$QUEUED_DIR" "$SESSION_ID")
 [ -L "$RESUME_FILE" ] && rm -f "$RESUME_FILE"
 jq -n \
@@ -248,7 +270,7 @@ jq -n \
     --arg rah "$RESUME_DATE" \
     --argjson sat "$NOW" \
     --arg sah "$(human_ts "$NOW")" \
-    --arg p "$FIXED_PROMPT" \
+    --arg p "$SELECTED_PROMPT" \
     --argjson car "$CURRENT_RATE" \
     --arg src "$SOURCE" \
     '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, scheduled_at_human: $sah, scheduled_prompt: $p, created_at_rate: $car, source: $src}' \

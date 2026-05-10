@@ -644,10 +644,10 @@ EXIT=$(run_stop_failure "$(make_hook_input "sess-037")")
 assert_exit_code "$EXIT" 0
 assert_json_field "$(resume_file_for sess-037)" '.source' "stop_failure"
 
-# Stop confirms (sees source=stop_failure → skips overuse, updates prompt)
+# Stop confirms (sees source=stop_failure → skips overuse, updates prompt with saved user prompt)
 EXIT=$(run_stop_hook "$(make_hook_input "sess-037")")
 assert_exit_code "$EXIT" 0
-assert_json_field "$(resume_file_for sess-037)" '.scheduled_prompt' "$FIXED_PROMPT"
+assert_json_field "$(resume_file_for sess-037)" '.scheduled_prompt' "user prompt"
 assert_stderr_contains "$TEST_DIR/stderr_out" "Auto-resume scheduled"
 
 # Rate recovers
@@ -750,18 +750,18 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ─── T44: UPS creates at 100% → Stop detects overuse → deletes schedule ────
-setup_test "T44_overuse_prompt_guard_then_stop"
+setup_test "T44_prompt_guard_then_stop_no_overuse"
 write_cache 100 57
 EXIT=$(run_prompt_guard "$(make_hook_input "sess-044" "$TEST_CWD" "user prompt")")
 assert_exit_code "$EXIT" 0
 assert_file_exists "$(resume_file_for sess-044)"
 assert_json_field "$(resume_file_for sess-044)" '.created_at_rate' "100"
 assert_json_field "$(resume_file_for sess-044)" '.source' "user_prompt"
-# Stop event sees created_at_rate=100, source!=stop_failure → overuse
+# Stop event sees source=user_prompt → skips overuse (v1.1.1: only source=stop triggers overuse)
 EXIT=$(run_stop_hook "$(make_hook_input "sess-044")")
 assert_exit_code "$EXIT" 0
-assert_file_not_exists "$(resume_file_for sess-044)"
-assert_stderr_contains "$TEST_DIR/stderr_out" "Overuse detected"
+assert_file_exists "$(resume_file_for sess-044)"
+assert_json_field "$(resume_file_for sess-044)" '.scheduled_prompt' "user prompt"
 
 # ─── T45: Stop creates at 100% → next Stop detects overuse (Ralph loop) ────
 setup_test "T45_overuse_stop_then_stop"
@@ -955,10 +955,10 @@ setup_test "T60_stop_overuse_no_markers"
 write_cache 100 57
 mkdir -p "$RESUME_DIR/queued"
 jq -n --arg sid "sess-060" --argjson rat "$FUTURE" --arg rah "$FUTURE_DATE" \
-    --argjson sat "$NOW" --arg p "prompt" --argjson car 100 --arg src "user_prompt" \
+    --argjson sat "$NOW" --arg p "prompt" --argjson car 100 --arg src "stop" \
     '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, scheduled_prompt: $p, created_at_rate: $car, source: $src}' \
     > "$(resume_file_for sess-060)"
-# No markers — overuse should trigger as before
+# No markers, source=stop — overuse should trigger
 EXIT=$(run_stop_hook "$(make_hook_input "sess-060")")
 assert_exit_code "$EXIT" 0
 assert_file_not_exists "$(resume_file_for sess-060)"
@@ -1053,12 +1053,12 @@ setup_test "T66_empty_marker_dir_no_block"
 write_cache 100 57
 mkdir -p "$RESUME_DIR/queued"
 jq -n --arg sid "sess-066" --argjson rat "$FUTURE" --arg rah "$FUTURE_DATE" \
-    --argjson sat "$NOW" --arg p "prompt" --argjson car 100 --arg src "user_prompt" \
+    --argjson sat "$NOW" --arg p "prompt" --argjson car 100 --arg src "stop" \
     '{session_id: $sid, resume_at: $rat, resume_at_human: $rah, scheduled_at: $sat, scheduled_prompt: $p, created_at_rate: $car, source: $src}' \
     > "$(resume_file_for sess-066)"
 # Create empty marker dir (all subagents completed)
 mkdir -p "$(marker_dir_for sess-066)"
-# Stop should still detect overuse (empty dir = no pending agents)
+# Stop should still detect overuse (empty dir = no pending agents, source=stop)
 EXIT=$(run_stop_hook "$(make_hook_input "sess-066")")
 assert_exit_code "$EXIT" 0
 assert_file_not_exists "$(resume_file_for sess-066)"
@@ -1425,6 +1425,123 @@ for script in "${HOOK_SCRIPTS[@]}"; do
         echo -e "  ${RED}FAIL${NC}: missing 'umask 077' in $(basename "$script")"
     fi
 done
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Tests: Prompt Side File (G18)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+prompt_side_file_for() {
+    echo "$RESUME_DIR/prompts/${1}.prompt"
+}
+
+# ─── T97: UPS saves prompt side file even when rate < 100% ────────────────
+setup_test "T97_ups_saves_prompt_low_rate"
+write_cache 50 30
+EXIT=$(run_prompt_guard "$(make_hook_input "sess-097" "$TEST_CWD" "my important task")")
+assert_exit_code "$EXIT" 0
+assert_file_exists "$(prompt_side_file_for sess-097)"
+TOTAL=$((TOTAL + 1))
+SAVED=$(cat "$(prompt_side_file_for sess-097)" 2>/dev/null)
+if [ "$SAVED" = "my important task" ]; then PASS=$((PASS + 1)); else
+    FAIL=$((FAIL + 1)); echo -e "  ${RED}FAIL${NC}: saved prompt = '$SAVED' (expected 'my important task')"
+fi
+assert_file_not_exists "$(resume_file_for sess-097)"
+
+# ─── T98: StopFailure uses saved prompt when no subagent markers ──────────
+setup_test "T98_stop_failure_uses_saved_prompt"
+write_cache 100 57
+mkdir -p "$RESUME_DIR/prompts"
+echo "user's original task" > "$RESUME_DIR/prompts/sess-098.prompt"
+EXIT=$(run_stop_failure "$(make_hook_input "sess-098")")
+assert_exit_code "$EXIT" 0
+assert_file_exists "$(resume_file_for sess-098)"
+assert_json_field "$(resume_file_for sess-098)" '.scheduled_prompt' "user's original task"
+
+# ─── T99: StopFailure uses fixed prompt when subagent markers exist ───────
+setup_test "T99_stop_failure_fixed_with_markers"
+write_cache 100 57
+mkdir -p "$RESUME_DIR/prompts"
+echo "user's original task" > "$RESUME_DIR/prompts/sess-099.prompt"
+mkdir -p "$(marker_dir_for sess-099)"
+echo "$(date +%s)" > "$(marker_file_for sess-099 agent-pending)"
+EXIT=$(run_stop_failure "$(make_hook_input "sess-099")")
+assert_exit_code "$EXIT" 0
+assert_file_exists "$(resume_file_for sess-099)"
+assert_json_field "$(resume_file_for sess-099)" '.scheduled_prompt' "$FIXED_PROMPT"
+
+# ─── T100: Stop hook uses saved prompt when creating new file (no markers) ─
+setup_test "T100_stop_uses_saved_prompt"
+write_cache 100 57
+mkdir -p "$RESUME_DIR/prompts"
+echo "continue my work" > "$RESUME_DIR/prompts/sess-100.prompt"
+EXIT=$(run_stop_hook "$(make_hook_input "sess-100")")
+assert_exit_code "$EXIT" 0
+assert_json_field "$(resume_file_for sess-100)" '.scheduled_prompt' "continue my work"
+
+# ─── T101: Prompt side file cleaned up on rate recovery ───────────────────
+setup_test "T101_prompt_cleanup_on_recovery"
+write_cache 100 57
+mkdir -p "$RESUME_DIR/prompts" "$RESUME_DIR/queued"
+echo "old prompt" > "$(prompt_side_file_for sess-101)"
+echo '{"session_id":"sess-101","resume_at":99999,"resume_at_human":"t","scheduled_at":1,"scheduled_at_human":"t","scheduled_prompt":"p","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-101)"
+write_cache 50 30
+EXIT=$(run_stop_hook "$(make_hook_input "sess-101")")
+assert_exit_code "$EXIT" 0
+assert_file_not_exists "$(resume_file_for sess-101)"
+assert_file_not_exists "$(prompt_side_file_for sess-101)"
+
+# ─── T102: StopFailure uses fixed prompt when no side file (backward compat) ─
+setup_test "T102_stop_failure_no_side_file"
+write_cache 100 57
+EXIT=$(run_stop_failure "$(make_hook_input "sess-102")")
+assert_exit_code "$EXIT" 0
+assert_json_field "$(resume_file_for sess-102)" '.scheduled_prompt' "$FIXED_PROMPT"
+
+# ─── T103: Full lifecycle — UPS saves at low rate, StopFailure uses it ────
+setup_test "T103_full_lifecycle_saved_prompt"
+write_cache 50 30
+run_prompt_guard "$(make_hook_input "sess-103" "$TEST_CWD" "build the feature")" >/dev/null 2>&1
+assert_file_exists "$(prompt_side_file_for sess-103)"
+assert_file_not_exists "$(resume_file_for sess-103)"
+write_cache 100 57
+EXIT=$(run_stop_failure "$(make_hook_input "sess-103")")
+assert_exit_code "$EXIT" 0
+assert_json_field "$(resume_file_for sess-103)" '.scheduled_prompt' "build the feature"
+
+# ─── T104: Stop hook uses saved prompt when updating existing file ────────
+setup_test "T104_stop_update_uses_saved_prompt"
+write_cache 100 57
+mkdir -p "$RESUME_DIR/prompts" "$RESUME_DIR/queued"
+echo "latest user intent" > "$(prompt_side_file_for sess-104)"
+echo '{"session_id":"sess-104","resume_at":99999,"resume_at_human":"t","scheduled_at":1,"scheduled_at_human":"t","scheduled_prompt":"old prompt","created_at_rate":50,"source":"stop"}' > "$(resume_file_for sess-104)"
+EXIT=$(run_stop_hook "$(make_hook_input "sess-104")")
+assert_exit_code "$EXIT" 0
+assert_json_field "$(resume_file_for sess-104)" '.scheduled_prompt' "latest user intent"
+
+# ─── T105: PROMPT_SAVED log entry written by UPS ──────────────────────────
+setup_test "T105_prompt_saved_log"
+write_cache 50 30
+run_prompt_guard "$(make_hook_input "sess-105" "$TEST_CWD" "log test prompt")" >/dev/null 2>&1
+assert_log_contains "PROMPT_SAVED session=sess-105"
+
+# ─── T106: PROMPT_SELECTED log entry written by StopFailure ──────────────
+setup_test "T106_prompt_selected_log"
+write_cache 100 57
+mkdir -p "$RESUME_DIR/prompts"
+echo "selected prompt" > "$(prompt_side_file_for sess-106)"
+run_stop_failure "$(make_hook_input "sess-106")" >/dev/null 2>&1
+assert_log_contains "PROMPT_SELECTED source=saved_user_prompt"
+
+# ─── T107: Stop uses fixed prompt when subagent markers exist ─────────────
+setup_test "T107_stop_fixed_with_markers"
+write_cache 100 57
+mkdir -p "$RESUME_DIR/prompts"
+echo "user prompt" > "$(prompt_side_file_for sess-107)"
+mkdir -p "$(marker_dir_for sess-107)"
+echo "$(date +%s)" > "$(marker_file_for sess-107 agent-x)"
+EXIT=$(run_stop_hook "$(make_hook_input "sess-107")")
+assert_exit_code "$EXIT" 0
+assert_json_field "$(resume_file_for sess-107)" '.scheduled_prompt' "$FIXED_PROMPT"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Summary
