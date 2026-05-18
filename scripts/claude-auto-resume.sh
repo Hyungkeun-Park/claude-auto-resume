@@ -7,7 +7,8 @@
 #
 # Resume strategies:
 # - Session inactive: claude -p --resume <id> "<prompt>"
-# - Session active: skip (let hooks handle schedule cleanup)
+# - Session active + rate-limited (source=stop/stop_failure): kill → resume
+# - Session active + other source: skip (user revived manually)
 
 set -uo pipefail
 umask 077
@@ -272,10 +273,24 @@ done
 RESUME_EXIT=1
 
 if [ -n "$CLAUDE_PID" ]; then
-    # ── Session is ACTIVE — user revived it manually, do not interfere ──
-    log "SKIPPED session=$SESSION_ID reason=session_still_active pid=$CLAUDE_PID"
-    archive_resume_file "skipped" "session_still_active"
-    exit 0
+    FILE_SOURCE=$(jq -r '.source // ""' "$RESUME_FILE" 2>/dev/null || echo "")
+    if [ "$FILE_SOURCE" = "stop" ] || [ "$FILE_SOURCE" = "stop_failure" ]; then
+        # Rate-limited idle session — kill and resume
+        log "KILLING_IDLE session=$SESSION_ID pid=$CLAUDE_PID source=$FILE_SOURCE"
+        kill_claude "$CLAUDE_PID"
+        if kill -0 "$CLAUDE_PID" 2>/dev/null; then
+            log "KILL_FAILED session=$SESSION_ID pid=$CLAUDE_PID"
+            archive_resume_file "failed" "kill_failed"
+            exit 1
+        fi
+        log "KILLED session=$SESSION_ID pid=$CLAUDE_PID"
+        sleep 2
+        resume_via_print "$SAVED_PROMPT" && RESUME_EXIT=0 || RESUME_EXIT=$?
+    else
+        log "SKIPPED session=$SESSION_ID reason=session_still_active pid=$CLAUDE_PID source=$FILE_SOURCE"
+        archive_resume_file "skipped" "session_still_active"
+        exit 0
+    fi
 else
     # ── Session is INACTIVE ──
     resume_via_print "$SAVED_PROMPT" && RESUME_EXIT=0 || RESUME_EXIT=$?

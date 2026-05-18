@@ -94,7 +94,7 @@ if [ -n "$RESUME_FILE" ]; then
         EXISTING_AT=$(jq -r '.resume_at // 0' "$RESUME_FILE" 2>/dev/null || echo "0")
         EXISTING_INT=$(printf '%.0f' "$EXISTING_AT" 2>/dev/null || echo 0)
         DELTA=$((EXISTING_INT - NOW)); MINS=$((DELTA / 60)); SECS=$((DELTA % 60))
-        echo -e "⏳ Auto-resume already scheduled at $EXISTING_TIME (in ${MINS}m ${SECS}s) [locked by stop_failure]\n   Session will terminate in 60s for scheduled resume.\n   Note: If this session is still active at resume time, resume will be skipped.\n   Cancel: rm $RESUME_FILE" >&2
+        echo -e "⏳ Auto-resume already scheduled at $EXISTING_TIME (in ${MINS}m ${SECS}s) [locked by stop_failure]\n   Session will terminate in 60s for scheduled resume.\n   Cancel: rm $RESUME_FILE" >&2
         schedule_session_kill "$RESUME_FILE"
         exit 0
     fi
@@ -166,7 +166,7 @@ echo "$(date +"%Y-%m-%dT%H:%M:%S%z") SCHEDULED_BY_FAILURE session=$SESSION_ID re
     >> "$HOME/.claude/logs/auto-resume-$(date +%Y-%m-%d).log"
 
 DELTA=$((RESUME_AT - NOW)); MINS=$((DELTA / 60)); SECS=$((DELTA % 60))
-echo -e "⏳ Auto-resume scheduled at $RESUME_DATE (in ${MINS}m ${SECS}s) [locked by stop_failure]\n   Session will terminate in 60s for scheduled resume.\n   Note: If this session is still active at resume time, resume will be skipped.\n   Cancel: rm $RESUME_FILE" >&2
+echo -e "⏳ Auto-resume scheduled at $RESUME_DATE (in ${MINS}m ${SECS}s) [locked by stop_failure]\n   Session will terminate in 60s for scheduled resume.\n   Cancel: rm $RESUME_FILE" >&2
 schedule_session_kill "$RESUME_FILE"
 
 exit 0

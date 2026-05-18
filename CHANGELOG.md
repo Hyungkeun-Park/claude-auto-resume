@@ -3,6 +3,12 @@
 All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.3.0] - 2026-05-18
+
+### Fixed
+- **Resume daemon kills idle sessions**: When the resume daemon finds the session still alive, it now checks the `source` field (`stop`/`stop_failure`) to determine if the session is idle (rate-limited). If so, it kills the session and resumes instead of skipping. This fixes the race condition where the fire-and-forget `schedule_session_kill` from Stop hooks could fail silently, leaving the session alive and the resume permanently skipped.
+- Removed misleading "If this session is still active at resume time, resume will be skipped" message from Stop/StopFailure hooks.
+
 ## [1.2.0] - 2026-05-10
 
 ### Added

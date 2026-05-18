@@ -253,7 +253,7 @@ if [ -n "$RESUME_FILE" ]; then
             '.scheduled_prompt = $p | .resume_at = $rat | .resume_at_human = $rah | .created_at_rate = $car | .source = (if .source == "stop_failure" then "stop_failure" else $src end)' \
             "$RESUME_FILE" > "$RESUME_FILE.tmp" 2>/dev/null && mv "$RESUME_FILE.tmp" "$RESUME_FILE" || rm -f "$RESUME_FILE.tmp"
         DELTA=$((RESUME_AT - NOW)); MINS=$((DELTA / 60)); SECS=$((DELTA % 60))
-        echo -e "⏳ Auto-resume scheduled at $RESUME_DATE (in ${MINS}m ${SECS}s)\n   Session will terminate in 60s for scheduled resume.\n   Note: If this session is still active at resume time, resume will be skipped.\n   Cancel: rm $RESUME_FILE" >&2
+        echo -e "⏳ Auto-resume scheduled at $RESUME_DATE (in ${MINS}m ${SECS}s)\n   Session will terminate in 60s for scheduled resume.\n   Cancel: rm $RESUME_FILE" >&2
         schedule_session_kill "$RESUME_FILE"
         exit 0
     fi
@@ -283,7 +283,7 @@ echo "$(date +"%Y-%m-%dT%H:%M:%S%z") SCHEDULED session=$SESSION_ID resume_at=$RE
     >> "$HOME/.claude/logs/auto-resume-$(date +%Y-%m-%d).log"
 
 DELTA=$((RESUME_AT - NOW)); MINS=$((DELTA / 60)); SECS=$((DELTA % 60))
-echo -e "⏳ Auto-resume scheduled at $RESUME_DATE (in ${MINS}m ${SECS}s)\n   Session will terminate in 60s for scheduled resume.\n   Note: If this session is still active at resume time, resume will be skipped.\n   Cancel: rm $RESUME_FILE" >&2
+echo -e "⏳ Auto-resume scheduled at $RESUME_DATE (in ${MINS}m ${SECS}s)\n   Session will terminate in 60s for scheduled resume.\n   Cancel: rm $RESUME_FILE" >&2
 schedule_session_kill "$RESUME_FILE"
 
 exit 0
